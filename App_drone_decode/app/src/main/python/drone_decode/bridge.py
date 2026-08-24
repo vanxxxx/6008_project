@@ -1,6 +1,7 @@
 """JSON boundary used by the Kotlin/Chaquopy facade."""
 
 import json
+from itertools import combinations
 from typing import Any
 
 from .decoder import ProtocolDecoder
@@ -62,27 +63,60 @@ def decode_replay_candidates_json(request_json: str) -> str:
         for index, candidate in enumerate(candidates):
             actions = list(candidate["actions"])
             confidences = list(candidate.get("confidences", [0.0] * len(actions)))
-            variants = [(0, actions)]
-            uncertain = sorted(range(len(actions)), key=lambda position: confidences[position])[:8]
-            for position in uncertain:
+            alternatives = list(candidate.get("alternatives", actions))
+            if len(actions) != 32 or len(confidences) != 32 or len(alternatives) != 32:
+                raise ValueError("Each replay candidate must contain 32 actions, confidences, and alternatives")
+            variants = {tuple(actions): (0, 0.0)}
+            uncertain = sorted(range(len(actions)), key=lambda position: confidences[position])[:12]
+            for change_count in range(1, 4):
+                for positions in combinations(uncertain, change_count):
+                    changed = actions.copy()
+                    for position in positions:
+                        changed[position] = alternatives[position]
+                    if changed != actions:
+                        key = tuple(changed)
+                        penalty = sum(confidences[position] for position in positions)
+                        prior_variant = variants.get(key)
+                        if prior_variant is None or (penalty, change_count) < (prior_variant[1], prior_variant[0]):
+                            variants[key] = (change_count, penalty)
+            for position in uncertain[:7]:
                 for replacement in ("H", "F", "L", "R"):
                     if replacement != actions[position]:
                         changed = actions.copy()
                         changed[position] = replacement
-                        variants.append((1, changed))
-            for variant_cost, variant_actions in variants:
+                        key = tuple(changed)
+                        penalty = confidences[position]
+                        prior_variant = variants.get(key)
+                        if prior_variant is None or (penalty, 1) < (prior_variant[1], prior_variant[0]):
+                            variants[key] = (1, penalty)
+            accepted_by_payload = {}
+            for variant_actions, (variant_cost, variant_penalty) in variants.items():
                 result = decode_data_actions(
                     variant_actions,
                     confidences,
                     _decoder.action_mapping,
                 )
-                if result.accepted:
-                    results.append({
+                decoded_results = [(result, list(variant_actions))] if result.accepted else []
+                for result, accepted_actions in decoded_results:
+                    result_data = result.to_dict()
+                    payload_key = (
+                        result_data.get("payload_hex"),
+                        result_data.get("seq"),
+                        result_data.get("length"),
+                    )
+                    item = {
                         "index": index,
                         "variantCost": variant_cost,
-                        "actions": variant_actions,
-                        **result.to_dict(),
-                    })
+                        "variantPenalty": variant_penalty,
+                        "actions": accepted_actions,
+                        **result_data,
+                    }
+                    prior = accepted_by_payload.get(payload_key)
+                    if prior is None or (variant_penalty, variant_cost, result.corrected_bit_errors) < (
+                        prior["variantPenalty"], prior["variantCost"], prior["corrected_bit_errors"]
+                    ):
+                        accepted_by_payload[payload_key] = item
+            results.extend(accepted_by_payload.values())
         return _json({"ok": True, "results": results})
     except Exception as error:
         return _json({"ok": False, "error": type(error).__name__, "message": str(error)})

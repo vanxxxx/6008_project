@@ -52,6 +52,7 @@ class MonitorViewModel(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     private val lastUiUpdateNs = AtomicLong(0L)
+    private val lastEvidenceLogNs = AtomicLong(-REALTIME_LOG_INTERVAL_NS)
     private val analyzedFrameIndex = AtomicLong(0L)
     private var currentSession: SessionSummary? = null
     private var replayJob: Job? = null
@@ -108,6 +109,7 @@ class MonitorViewModel(
     }
 
     fun onRecordingState(recording: Boolean, label: String?) {
+        if (recording) lastEvidenceLogNs.set(-REALTIME_LOG_INTERVAL_NS)
         mutableState.update { it.copy(isRecording = recording, recordingLabel = label) }
         appendLog(
             severity = if (recording) LogSeverity.WARNING else LogSeverity.INFO,
@@ -141,6 +143,7 @@ class MonitorViewModel(
         val current = mutableState.value
         val likely = observation.actionProbabilities.maxByOrNull { it.value }
             ?.toPair() ?: (ActionClass.UNKNOWN to 1f)
+        publishRealtimeEvidenceLog(observation, likely, current)
         if (current.functionSettings.retainRawObservations) {
             val symbol = if (likely.first == ActionClass.UNKNOWN) {
                 "??"
@@ -180,10 +183,50 @@ class MonitorViewModel(
                 actionConfidence = likely.second,
                 normalizedVelocityPerSec = observation.normalizedLinearVelocityPerSec,
                 yawRateDegPerSec = observation.yawRateDegPerSec,
+                relativeVelocityXPerSec = observation.relativeVelocityXPerSec,
+                relativeVelocityYPerSec = observation.relativeVelocityYPerSec,
+                relativeAccelerationXPerSec2 = observation.relativeAccelerationXPerSec2,
+                relativeAccelerationYPerSec2 = observation.relativeAccelerationYPerSec2,
                 timingWarning = timingWarning(fps, state.profile),
             )
         }
     }
+
+    private fun publishRealtimeEvidenceLog(
+        observation: MotionObservation,
+        likely: Pair<ActionClass, Float>,
+        state: MonitorUiState,
+    ) {
+        if (!state.isReplayProcessing && !state.isRecording && !state.isDecoding) return
+        val previous = lastEvidenceLogNs.get()
+        if (observation.timestampNs - previous < REALTIME_LOG_INTERVAL_NS ||
+            !lastEvidenceLogNs.compareAndSet(previous, observation.timestampNs)
+        ) return
+        val source = when {
+            state.isReplayProcessing -> "Replay ${"%.1f".format(observation.timestampNs / 1_000_000_000.0)} s"
+            state.isRecording -> "Recording"
+            else -> "Camera"
+        }
+        val relativeVelocity = formatVector(
+            observation.relativeVelocityXPerSec,
+            observation.relativeVelocityYPerSec,
+            "/s",
+        )
+        val relativeAcceleration = formatVector(
+            observation.relativeAccelerationXPerSec2,
+            observation.relativeAccelerationYPerSec2,
+            "/s²",
+        )
+        appendLog(
+            LogSeverity.INFO,
+            "$source · target=${if (observation.visible) "visible" else "lost"} · " +
+                "action=${likely.first.shortName} ${(likely.second * 100).toInt()}% · " +
+                "relative v=$relativeVelocity · a=$relativeAcceleration",
+        )
+    }
+
+    private fun formatVector(x: Float?, y: Float?, unit: String): String =
+        if (x != null && y != null) "(${"%.3f".format(x)}, ${"%.3f".format(y)}) $unit" else "—"
 
     fun startDecoding() {
         viewModelScope.launch {
@@ -206,6 +249,7 @@ class MonitorViewModel(
             val result = decoderMutex.withLock { container.decoderFacade.start() }
             if (result.isSuccess) {
                 slotAggregator.reset()
+                lastEvidenceLogNs.set(-REALTIME_LOG_INTERVAL_NS)
                 mutableState.update {
                     it.copy(
                         isDecoding = true,
@@ -323,6 +367,7 @@ class MonitorViewModel(
                 slotAggregator.reset()
                 analyzedFrameIndex.set(0L)
                 lastUiUpdateNs.set(-1_000_000_000L)
+                lastEvidenceLogNs.set(-REALTIME_LOG_INTERVAL_NS)
                 currentSession = container.sessionLogStore.startSession(
                     profileName = profile.profileName,
                     dataSource = "VIDEO_REPLAY",
@@ -424,6 +469,7 @@ class MonitorViewModel(
                             LogSeverity.INFO,
                             "Replay BCH group ${index + 1}: payload=${group.payloadHex.ifEmpty { "<empty>" }} " +
                                 "seq=${group.sequence ?: "?"} votes=${group.support} " +
+                                "evidence=${"%.2f".format(group.evidenceScore)} " +
                                 "sync=${group.bestSyncMatches}/8 margin=${"%.3f".format(group.bestMargin)}",
                         )
                     }
@@ -814,6 +860,7 @@ class MonitorViewModel(
 
     private companion object {
         const val MAX_REPLAY_OBSERVATIONS = 200_000
+        const val REALTIME_LOG_INTERVAL_NS = 1_000_000_000L
     }
 }
 

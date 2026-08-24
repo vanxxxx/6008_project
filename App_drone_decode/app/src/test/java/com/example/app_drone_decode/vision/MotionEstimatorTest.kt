@@ -38,6 +38,32 @@ class MotionEstimatorTest {
     }
 
     @Test
+    fun groundReferenceRemovesCameraMotionAndProducesRelativeAcceleration() {
+        val estimator = MotionEstimator()
+        val calibration = CameraCalibration(
+            longitudinalAxisX = 1f,
+            longitudinalAxisY = 0f,
+            calibrated = true,
+        )
+        estimator.estimate(visibleTracking(0.40f, 0.5f, 0f, 0.04f, 0f), 1_000_000_000L, calibration)
+        val second = estimator.estimate(
+            visibleTracking(0.50f, 0.5f, 0f, 0.04f, 0f),
+            1_500_000_000L,
+            calibration,
+        )
+        val third = estimator.estimate(
+            visibleTracking(0.62f, 0.5f, 0f, 0.04f, 0f),
+            2_000_000_000L,
+            calibration,
+        )
+
+        assertEquals(0.16f, second.relativeVelocityXPerSec!!, 0.0001f)
+        assertNull(second.relativeAccelerationXPerSec2)
+        assertEquals(0.20f, third.normalizedLinearVelocityPerSec!!, 0.0001f)
+        assertEquals(0.08f, third.relativeAccelerationXPerSec2!!, 0.0001f)
+    }
+
+    @Test
     fun implausibleContourAngleFlipIsRejected() {
         val estimator = MotionEstimator()
         val calibration = CameraCalibration(calibrated = true)
@@ -85,11 +111,19 @@ class MotionEstimatorTest {
         assertEquals(ActionClass.HOVER, classifier.classify(listOf(first, second, third)).mostLikely.first)
     }
 
-    private fun visibleTracking(x: Float, y: Float, orientation: Float) = TrackingResult(
+    private fun visibleTracking(
+        x: Float,
+        y: Float,
+        orientation: Float,
+        sceneVelocityX: Float? = null,
+        sceneVelocityY: Float? = null,
+    ) = TrackingResult(
         visible = true,
         confidence = 0.95f,
         boundingBox = NormalizedRect(x - 0.05f, y - 0.05f, x + 0.05f, y + 0.05f),
         orientationDeg = orientation,
+        sceneVelocityXPerSec = sceneVelocityX,
+        sceneVelocityYPerSec = sceneVelocityY,
     )
 
     private fun classifiedObservation(

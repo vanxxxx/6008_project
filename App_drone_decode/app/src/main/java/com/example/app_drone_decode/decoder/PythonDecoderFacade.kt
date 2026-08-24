@@ -25,6 +25,7 @@ class PythonDecoderFacade(private val appContext: Context) {
         val correctedBitErrors: Int,
         val rejectionReason: String?,
         val variantCost: Int = 0,
+        val variantPenalty: Float = 0f,
         val actions: List<ActionClass> = emptyList(),
     )
 
@@ -111,6 +112,7 @@ class PythonDecoderFacade(private val appContext: Context) {
                         correctedBitErrors = item.optInt("corrected_bit_errors"),
                         rejectionReason = item.nullableString("rejection_reason"),
                         variantCost = item.optInt("variantCost"),
+                        variantPenalty = item.optDouble("variantPenalty", 0.0).toFloat(),
                         actions = item.optJSONArray("actions")?.toStringList()
                             ?.map(ActionClass::fromShortName).orEmpty(),
                     )

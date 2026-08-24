@@ -50,6 +50,10 @@ data class MotionObservation(
     val sceneRotationDegPerSec: Float? = null,
     val sceneScaleRatePerSec: Float? = null,
     val targetAreaFraction: Float? = null,
+    val relativeVelocityXPerSec: Float? = null,
+    val relativeVelocityYPerSec: Float? = null,
+    val relativeAccelerationXPerSec2: Float? = null,
+    val relativeAccelerationYPerSec2: Float? = null,
 )
 
 data class SlotObservation(

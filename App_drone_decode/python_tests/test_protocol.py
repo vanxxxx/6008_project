@@ -160,6 +160,29 @@ def test_replay_soft_decision_recovers_one_low_confidence_action():
     assert any(item["payload_ascii"] == "Hello" for item in response["results"])
 
 
+def test_replay_soft_decision_combines_multiple_visual_alternatives():
+    damaged = list(HELLO_DATA_ACTIONS)
+    alternatives = damaged.copy()
+    confidences = [0.9] * 32
+    one_bit_alternative = {"H": "F", "F": "H", "L": "R", "R": "L"}
+    for position in range(6):
+        alternatives[position] = damaged[position]
+        damaged[position] = one_bit_alternative[damaged[position]]
+        confidences[position] = 0.01 + position * 0.01
+    assert not decode_data_actions(damaged).accepted
+    response = json.loads(bridge.decode_replay_candidates_json(json.dumps({
+        "candidates": [{
+            "actions": damaged,
+            "confidences": confidences,
+            "alternatives": alternatives,
+        }]
+    })))
+
+    assert response["ok"]
+    assert any(item["payload_ascii"] == "Hello" for item in response["results"])
+    assert any(item["variantCost"] >= 3 for item in response["results"] if item["payload_ascii"] == "Hello")
+
+
 def test_nonzero_transport_padding_is_rejected():
     damaged = list(HELLO_DATA_ACTIONS)
     damaged[-1] = "L"  # R=10 to L=11 changes only the fixed transport padding bit.

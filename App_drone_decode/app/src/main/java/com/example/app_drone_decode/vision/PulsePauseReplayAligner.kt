@@ -38,6 +38,7 @@ internal class PulsePauseReplayAligner(
         while (startNs <= lastStartNs) {
             val rawProfiles = buildProfiles(signals, startNs, cycleNs)
             if (rawProfiles != null) {
+                val startModels = mutableListOf<Pair<Int, CalibratedModel>>()
                 CHANNEL_SETS.forEachIndexed { channelSetIndex, channels ->
                     val profileColumns = IntArray(BIN_COUNT * channels.size) { index ->
                         val phase = index / channels.size
@@ -50,15 +51,21 @@ internal class PulsePauseReplayAligner(
                         val phase = index / channels.size
                         phase * SIGNAL_CHANNEL_COUNT + channels[index % channels.size]
                     }
+                    val idleColumns = IntArray((BIN_COUNT - ACTION_BIN_COUNT) * channels.size) { index ->
+                        val phase = ACTION_BIN_COUNT + index / channels.size
+                        phase * SIGNAL_CHANNEL_COUNT + channels[index % channels.size]
+                    }
                     listOf(
                         profileColumns,
                         deltaColumns,
                         profileColumns + deltaColumns,
                         actionColumns,
+                        idleColumns,
                         actionColumns + deltaColumns,
                     ).forEachIndexed { modeIndex, columns ->
                         calibrate(rawProfiles, columns)?.let { calibrated ->
                             if (calibrated.syncMatches >= MINIMUM_CANDIDATE_MATCHES) {
+                                startModels += channelSetIndex to calibrated
                                 candidates += ModelCandidate(
                                     startNs = startNs,
                                     syncMatches = calibrated.syncMatches,
@@ -68,10 +75,25 @@ internal class PulsePauseReplayAligner(
                                     alternativeActions = calibrated.alternativeActions,
                                     confidences = calibrated.confidences,
                                     sampleCounts = rawProfiles.sampleCounts,
-                                    modelOrder = channelSetIndex * 5 + modeIndex,
+                                    modelOrder = channelSetIndex * 6 + modeIndex,
                                 )
                             }
                         }
+                    }
+                }
+                ENSEMBLE_CHANNEL_FAMILIES.forEachIndexed { familyIndex, family ->
+                    ensemble(startModels.filter { it.first in family }.map { it.second })?.let { calibrated ->
+                        candidates += ModelCandidate(
+                            startNs = startNs,
+                            syncMatches = calibrated.syncMatches,
+                            margin = calibrated.margin,
+                            score = calibrated.score,
+                            actions = calibrated.actions,
+                            alternativeActions = calibrated.alternativeActions,
+                            confidences = calibrated.confidences,
+                            sampleCounts = rawProfiles.sampleCounts,
+                            modelOrder = 100 + familyIndex,
+                        )
                     }
                 }
             }
@@ -81,13 +103,27 @@ internal class PulsePauseReplayAligner(
         if (candidates.isEmpty()) {
             return ReplaySyncSearchResult(null, 0f, "No visually separable pulse/pause SYNC model was found")
         }
-        val retained = candidates
-            .sortedWith(
-                compareByDescending<ModelCandidate> { it.syncMatches }
-                    .thenByDescending { it.margin }
-                    .thenBy { it.startNs }
-                    .thenBy { it.modelOrder },
-            )
+        val ordering = compareByDescending<ModelCandidate> { it.syncMatches }
+            .thenByDescending { it.margin }
+            .thenBy { it.startNs }
+            .thenBy { it.modelOrder }
+        val orderedCandidates = candidates.sortedWith(ordering)
+        val reservedPerSyncScore = (profile.syncActions.size downTo MINIMUM_CANDIDATE_MATCHES).flatMap { score ->
+            val quota = if (score == MINIMUM_CANDIDATE_MATCHES) {
+                LOW_SYNC_CANDIDATE_QUOTA
+            } else {
+                OTHER_SYNC_CANDIDATE_QUOTA
+            }
+            candidates.asSequence()
+                .filter { it.syncMatches == score }
+                .sortedWith(compareByDescending<ModelCandidate> { it.margin }.thenBy { it.startNs })
+                .take(quota)
+                .toList()
+        }
+        val retained = (orderedCandidates.take(GLOBAL_TOP_CANDIDATES) + reservedPerSyncScore)
+            .distinctBy { candidate ->
+                Triple(candidate.startNs, candidate.modelOrder, candidate.actions.joinToString("") { it.shortName })
+            }
             .take(MAXIMUM_REPLAY_CANDIDATES)
             .map { it.toAlignment(signals.first().timestampNs) }
         val best = retained.first()
@@ -122,6 +158,22 @@ internal class PulsePauseReplayAligner(
         }
         fillMissing(base)
         val smooth = smooth(base)
+        val poseVelocity = Array(ordered.size) { index ->
+            val priorIndex = (index - 1).coerceAtLeast(0)
+            val nextIndex = (index + 1).coerceAtMost(ordered.lastIndex)
+            val elapsedSec = ((ordered[nextIndex].timestampNs - ordered[priorIndex].timestampNs) /
+                1_000_000_000f).coerceAtLeast(0.001f)
+            FloatArray(POSE_CHANNEL_COUNT) { channel ->
+                val sourceChannel = SCENE_CHANNEL_COUNT + channel
+                (smooth[nextIndex][sourceChannel] - smooth[priorIndex][sourceChannel]) / elapsedSec
+            }
+        }
+        val relativeVelocity = Array(ordered.size) { index ->
+            floatArrayOf(
+                poseVelocity[index][0] - smooth[index][0],
+                poseVelocity[index][1] - smooth[index][1],
+            )
+        }
         return ordered.indices.map { index ->
             val priorIndex = (index - 1).coerceAtLeast(0)
             val nextIndex = (index + 1).coerceAtMost(ordered.lastIndex)
@@ -133,8 +185,14 @@ internal class PulsePauseReplayAligner(
                 values[4 + channel] = (smooth[nextIndex][channel] - smooth[priorIndex][channel]) / elapsedSec
             }
             for (channel in 0 until POSE_CHANNEL_COUNT) {
-                val sourceChannel = SCENE_CHANNEL_COUNT + channel
-                values[8 + channel] = (smooth[nextIndex][sourceChannel] - smooth[priorIndex][sourceChannel]) /
+                values[8 + channel] = poseVelocity[index][channel]
+            }
+            values[14] = relativeVelocity[index][0]
+            values[15] = relativeVelocity[index][1]
+            values[16] = (relativeVelocity[nextIndex][0] - relativeVelocity[priorIndex][0]) / elapsedSec
+            values[17] = (relativeVelocity[nextIndex][1] - relativeVelocity[priorIndex][1]) / elapsedSec
+            for (channel in 0 until POSE_CHANNEL_COUNT) {
+                values[18 + channel] = (poseVelocity[nextIndex][channel] - poseVelocity[priorIndex][channel]) /
                     elapsedSec
             }
             SignalSample(ordered[index].timestampNs, values)
@@ -221,7 +279,6 @@ internal class PulsePauseReplayAligner(
                 .takeIf { it >= MINIMUM_SCALE } ?: 1f
             selected.forEach { row -> row[column] = ((row[column] - center) / scale).coerceIn(-12f, 12f) }
         }
-
         var matches = 0
         val margins = ArrayList<Float>(profile.syncActions.size)
         profile.syncActions.forEachIndexed { index, expected ->
@@ -256,6 +313,36 @@ internal class PulsePauseReplayAligner(
         val score = (matches.toFloat() / profile.syncActions.size * 0.80f +
             (1f - exp(-margin.toDouble())).toFloat() * 0.20f).coerceIn(0f, 1f)
         return CalibratedModel(matches, margin, score, actions, alternativeActions, confidences)
+    }
+
+    private fun ensemble(models: List<CalibratedModel>): CalibratedModel? {
+        if (models.size < MINIMUM_ENSEMBLE_MODELS) return null
+        val votes = Array(FRAME_ACTION_COUNT) { FloatArray(ACTIONS.size) }
+        models.forEach { model ->
+            val syncWeight = (model.syncMatches - MINIMUM_CANDIDATE_MATCHES + 1).coerceAtLeast(1)
+            val weight = syncWeight * syncWeight * (0.25f + model.margin.coerceIn(0f, 2f))
+            model.actions.forEachIndexed { slot, action ->
+                votes[slot][ACTIONS.indexOf(action)] += weight
+            }
+        }
+        val actions = ArrayList<ActionClass>(FRAME_ACTION_COUNT)
+        val alternatives = ArrayList<ActionClass>(FRAME_ACTION_COUNT)
+        val confidences = FloatArray(FRAME_ACTION_COUNT)
+        val voteMargins = ArrayList<Float>(FRAME_ACTION_COUNT)
+        votes.forEachIndexed { index, actionVotes ->
+            val order = ACTIONS.indices.sortedByDescending { actionVotes[it] }
+            actions += ACTIONS[order[0]]
+            alternatives += ACTIONS[order[1]]
+            val total = actionVotes.sum().coerceAtLeast(0.001f)
+            val gap = (actionVotes[order[0]] - actionVotes[order[1]]).coerceAtLeast(0f)
+            confidences[index] = (gap / total).coerceIn(0.05f, 0.98f)
+            voteMargins += gap / total
+        }
+        val matches = profile.syncActions.indices.count { actions[it] == profile.syncActions[it] }
+        if (matches < MINIMUM_CANDIDATE_MATCHES) return null
+        val margin = median(voteMargins)
+        val score = (matches.toFloat() / profile.syncActions.size * 0.80f + margin * 0.20f).coerceIn(0f, 1f)
+        return CalibratedModel(matches, margin, score, actions, alternatives, confidences)
     }
 
     private fun ModelCandidate.toAlignment(firstTimestampNs: Long): ReplaySyncAlignment {
@@ -341,14 +428,19 @@ internal class PulsePauseReplayAligner(
         const val ACTION_BIN_COUNT = 4
         const val SCENE_CHANNEL_COUNT = 4
         const val POSE_CHANNEL_COUNT = 6
+        const val RELATIVE_CHANNEL_COUNT = 4
         const val SOURCE_CHANNEL_COUNT = SCENE_CHANNEL_COUNT + POSE_CHANNEL_COUNT
-        const val SIGNAL_CHANNEL_COUNT = 14
+        const val SIGNAL_CHANNEL_COUNT = 24
         const val PROFILE_WIDTH = BIN_COUNT * SIGNAL_CHANNEL_COUNT + SIGNAL_CHANNEL_COUNT
         const val MINIMUM_SIGNAL_SAMPLES = 80
         const val MINIMUM_BIN_SAMPLES = 1
         const val MINIMUM_PHASE_STEPS = 32
         const val MINIMUM_CANDIDATE_MATCHES = 4
-        const val MAXIMUM_REPLAY_CANDIDATES = 4096
+        const val MINIMUM_ENSEMBLE_MODELS = 3
+        const val MAXIMUM_REPLAY_CANDIDATES = 640
+        const val GLOBAL_TOP_CANDIDATES = 40
+        const val LOW_SYNC_CANDIDATE_QUOTA = 300
+        const val OTHER_SYNC_CANDIDATE_QUOTA = 75
         const val MAD_SCALE = 1.4826f
         const val MINIMUM_SCALE = 0.001f
         const val SMOOTHING_RADIUS = 2
@@ -369,7 +461,20 @@ internal class PulsePauseReplayAligner(
             intArrayOf(8, 9),
             intArrayOf(8, 9, 10, 11),
             intArrayOf(8, 9, 10, 11, 12, 13),
+            intArrayOf(14, 15),
+            intArrayOf(16, 17),
+            intArrayOf(14, 15, 16, 17),
+            intArrayOf(8, 9, 14, 15, 16, 17),
+            intArrayOf(18, 19),
+            intArrayOf(18, 19, 20, 21, 22, 23),
+            intArrayOf(8, 9, 10, 11, 12, 13, 18, 19, 20, 21, 22, 23),
             IntArray(SIGNAL_CHANNEL_COUNT) { it },
+        )
+        val ENSEMBLE_CHANNEL_FAMILIES = listOf(
+            0..CHANNEL_SETS.lastIndex,
+            6..8,
+            9..11,
+            6..15,
         )
     }
 }

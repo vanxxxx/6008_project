@@ -4,6 +4,7 @@ import com.example.app_drone_decode.decoder.PythonDecoderFacade.ReplayCandidateD
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
+import kotlin.math.exp
 
 data class ReplayConsensusSelection(
     val alignment: ReplaySyncAlignment?,
@@ -20,6 +21,7 @@ data class ReplayPayloadGroupSummary(
     val support: Int,
     val bestSyncMatches: Int,
     val bestMargin: Float,
+    val evidenceScore: Float,
 )
 
 /** Selects a payload supported by independent blind visual models and BCH. */
@@ -48,16 +50,21 @@ object ReplayCandidateConsensus {
             val members = rawMembers.groupBy { evaluated ->
                 evaluated.alignment.frameSlots.drop(8).joinToString("") { it.action.shortName }
             }.values.map { variants ->
-                variants.minBy { it.decode.variantCost }
+                variants.minWith(
+                    compareBy<Evaluated> { it.decode.variantPenalty }
+                        .thenBy { it.decode.variantCost }
+                        .thenBy { it.decode.correctedBitErrors },
+                )
             }
             PayloadGroup(
                 members = members,
                 bestMargin = members.maxOf { it.alignment.modelMargin },
                 bestSyncMatches = members.maxOf { it.alignment.syncMatches },
                 textQuality = textQuality(members.first().decode.payloadHex),
+                evidenceScore = members.sumOf(::visualEvidence).toFloat(),
             )
         }.sortedWith(
-            compareByDescending<PayloadGroup> { it.members.size + it.textQuality * TEXT_QUALITY_WEIGHT }
+            compareByDescending<PayloadGroup> { it.evidenceScore + it.textQuality * TEXT_QUALITY_WEIGHT }
                 .thenByDescending { it.members.size }
                 .thenByDescending { it.bestMargin }
                 .thenByDescending { it.bestSyncMatches },
@@ -68,8 +75,8 @@ object ReplayCandidateConsensus {
             return failure("BCH produced no visual consensus across the replay models", eligible.size, summaries)
         }
         val runner = groups.getOrNull(1)
-        if (runner != null && runner.members.size == winner.members.size &&
-            winner.bestMargin - runner.bestMargin < MINIMUM_TIED_MARGIN
+        if (runner != null &&
+            rankingScore(winner) - rankingScore(runner) < MINIMUM_TIED_EVIDENCE
         ) {
             return failure(
                 "Two BCH-valid payloads have indistinguishable visual support",
@@ -100,8 +107,19 @@ object ReplayCandidateConsensus {
             support = group.members.size,
             bestSyncMatches = group.bestSyncMatches,
             bestMargin = group.bestMargin,
+            evidenceScore = group.evidenceScore,
         )
     }
+
+    private fun visualEvidence(evaluated: Evaluated): Double {
+        val syncWeight = 0.5 + evaluated.alignment.syncMatches / 16.0
+        val marginWeight = 0.5 + evaluated.alignment.modelMargin.coerceIn(0f, 1.5f)
+        val softWeight = exp(-SOFT_PENALTY_WEIGHT * evaluated.decode.variantPenalty)
+        return syncWeight * marginWeight * softWeight
+    }
+
+    private fun rankingScore(group: PayloadGroup): Float =
+        group.evidenceScore + group.textQuality * TEXT_QUALITY_WEIGHT
 
     private fun ReplaySyncAlignment.withDataActions(actions: List<com.example.app_drone_decode.domain.model.ActionClass>): ReplaySyncAlignment {
         if (actions.size != 32) return this
@@ -154,11 +172,13 @@ object ReplayCandidateConsensus {
         val bestMargin: Float,
         val bestSyncMatches: Int,
         val textQuality: Int,
+        val evidenceScore: Float,
     )
 
     private const val SYNC_MATCH_TOLERANCE = 4
     private const val MINIMUM_SUPPORT = 2
-    private const val MINIMUM_TIED_MARGIN = 0.05f
+    private const val MINIMUM_TIED_EVIDENCE = 0.05f
     private const val MAXIMUM_REPORTED_GROUPS = 5
     private const val TEXT_QUALITY_WEIGHT = 0.75f
+    private const val SOFT_PENALTY_WEIGHT = 2.0
 }

@@ -505,6 +505,21 @@ private fun DiagnosticsPanel(state: MonitorUiState, modifier: Modifier) {
                 MetricRow("Target", if (state.targetVisible) "VISIBLE" else "LOST")
                 MetricRow("Action", "${state.currentAction.shortName}  ${(state.actionConfidence * 100).toInt()}%")
                 MetricRow("Velocity", state.normalizedVelocityPerSec?.let { "%.3f /s".format(it) } ?: "—")
+                MetricRow(
+                    "Ground-relative velocity",
+                    if (state.relativeVelocityXPerSec != null && state.relativeVelocityYPerSec != null) {
+                        "%.3f, %.3f /s".format(state.relativeVelocityXPerSec, state.relativeVelocityYPerSec)
+                    } else "—",
+                )
+                MetricRow(
+                    "Ground-relative acceleration",
+                    if (state.relativeAccelerationXPerSec2 != null && state.relativeAccelerationYPerSec2 != null) {
+                        "%.3f, %.3f /s²".format(
+                            state.relativeAccelerationXPerSec2,
+                            state.relativeAccelerationYPerSec2,
+                        )
+                    } else "—",
+                )
                 MetricRow("Orientation rate", state.yawRateDegPerSec?.let { "%.1f deg/s".format(it) } ?: "—")
                 Text("Actions", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 StreamText(state.rawActions.joinToString(" ").ifEmpty { "—" })
