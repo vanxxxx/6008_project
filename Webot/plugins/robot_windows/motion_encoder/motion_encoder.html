@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>UAV Motion Encoder</title>
+    <link rel="stylesheet" href="motion_encoder.css?v=driver-map-v2-20260824">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">M</span>
+          <div>
+            <h1>UAV Motion Encoder</h1>
+            <p>BCH(63,45) · Visible motion protocol v2</p>
+          </div>
+        </div>
+        <div id="connection-status" class="status-pill" data-state="waiting">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>Waiting for controller</span>
+        </div>
+      </header>
+
+      <main>
+        <section class="workspace" aria-label="Message encoding and execution">
+          <div class="composer-panel panel">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">Message input</span>
+                <h2>Turn text into motion frames</h2>
+              </div>
+              <span id="byte-counter" class="byte-counter">0 / 240 bytes</span>
+            </div>
+
+            <label class="field-label" for="message-input">UTF-8 message</label>
+            <textarea id="message-input" rows="5" spellcheck="false" aria-describedby="message-help">Hello</textarea>
+            <p id="message-help" class="field-help">Each frame carries up to 5 bytes. Every encoded action is followed by a configurable idle/position-hold guard interval.</p>
+
+            <div class="controls-row">
+              <div class="timing-controls" aria-label="Motion timing">
+                <label class="duration-control" for="action-duration">
+                  <span>Action duration</span>
+                  <span class="number-field">
+                    <input id="action-duration" type="number" min="100" max="5000" step="50" value="500" inputmode="numeric">
+                    <span>ms</span>
+                  </span>
+                </label>
+                <label class="duration-control" for="idle-duration">
+                  <span>Idle / hold</span>
+                  <span class="number-field">
+                    <input id="idle-duration" type="number" min="0" max="5000" step="50" value="500" inputmode="numeric">
+                    <span>ms</span>
+                  </span>
+                </label>
+                <button id="reset-timing-button" class="button secondary timing-reset" type="button">Reset timing</button>
+              </div>
+              <div class="button-group">
+                <button id="start-button" class="button primary" type="button" disabled>Run sequence</button>
+                <button id="stop-button" class="button danger" type="button" disabled>Stop and hold</button>
+              </div>
+            </div>
+
+            <div id="input-error" class="inline-message" role="alert" hidden></div>
+            <div class="safety-note">
+              <span aria-hidden="true">!</span>
+              <p>The C driver uses the existing keyboard motion targets: H = Down/backward, F = Up/forward, L = Q/left, and R = E/right. The idle interval applies no movement input.</p>
+            </div>
+          </div>
+
+          <aside class="execution-panel panel" aria-label="Execution status">
+            <div class="section-heading compact">
+              <div>
+                <span class="eyebrow">Flight task</span>
+                <h2 id="execution-title">Standing by</h2>
+              </div>
+              <span id="current-action" class="action-badge" data-action="-">— · Position hold</span>
+            </div>
+
+            <div class="progress-track" aria-label="Overall execution progress">
+              <span id="overall-progress"></span>
+            </div>
+            <div class="progress-meta">
+              <span id="slot-status">Not started</span>
+              <span id="time-status">0.0 / 0.0 s</span>
+            </div>
+
+            <dl class="metric-grid">
+              <div>
+                <dt>UTF-8 bytes</dt>
+                <dd id="metric-bytes">—</dd>
+              </div>
+              <div>
+                <dt>Frames</dt>
+                <dd id="metric-frames">—</dd>
+              </div>
+              <div>
+                <dt>Total actions</dt>
+                <dd id="metric-actions">—</dd>
+              </div>
+              <div>
+                <dt>Estimated time</dt>
+                <dd id="metric-duration">—</dd>
+              </div>
+            </dl>
+
+            <div class="mapping" aria-label="Action-to-bit mapping">
+              <div><span class="symbol h">H</span><code>00</code><span>Backward · Down</span></div>
+              <div><span class="symbol f">F</span><code>01</code><span>Forward · Up</span></div>
+              <div><span class="symbol l">L</span><code>11</code><span>Move left · Q</span></div>
+              <div><span class="symbol r">R</span><code>10</code><span>Move right · E</span></div>
+            </div>
+          </aside>
+        </section>
+
+        <section class="encoding-section" aria-labelledby="encoding-title">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Encoding output</span>
+              <h2 id="encoding-title">Protocol frames</h2>
+            </div>
+            <span class="legend"><span class="legend-sync"></span>SYNC prefix</span>
+          </div>
+          <div id="empty-state" class="empty-state">The encoding preview will appear after the controller connects.</div>
+          <div id="frame-list" class="frame-list" aria-live="polite"></div>
+        </section>
+      </main>
+
+      <footer>
+        Fixed frame structure: 8 SYNC actions + 32 data actions. Wall-clock slot time equals action duration plus idle/position-hold duration.
+      </footer>
+    </div>
+
+    <script type="module" src="motion_encoder.js?v=driver-map-v2-20260824"></script>
+  </body>
+</html>

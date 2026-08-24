@@ -1,0 +1,39 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/Floor.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/dji/mavic/protos/Mavic2Pro.proto"
+
+WorldInfo {
+}
+Viewpoint {
+  orientation 0.3100796248527562 0.07389542821349893 -0.9478344222174659 2.6647548206644225
+  position 5.612882967987444 3.0098067709434093 4.536043879662177
+  follow "Mavic 2 PRO:camera yaw:camera pitch:camera roll:camera"
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+Floor {
+  size 100 100
+}
+Mavic2Pro {
+  hidden position_0_0 -6.070112273265902e-11
+  hidden linearVelocity_0 -0.011937527806847729 0.003411755029505645 -1.9408724614013535e-05
+  hidden angularVelocity_0 -0.00034876886472240924 0.0014846150408810385 0.033403698166330965
+  hidden position_5_0 7.475373403814031e-05
+  hidden linearVelocity_5 -0.007961148114259752 0.0018601779433490742 9.128891733702332e-05
+  hidden angularVelocity_5 -0.00034876894235774024 0.0014846150817562536 0.03340364315451692
+  hidden rotation_6 0 1 0 7.475373621186538e-05
+  hidden position_6_0 0.00018808800628912107
+  hidden linearVelocity_6 -0.007970458955270519 0.002052256166957837 8.296054107360327e-05
+  hidden angularVelocity_6 -0.00023166607156928568 0.0014461818676507492 0.03340341644687839
+  hidden rotation_7 1 0 0 0.00018808800525769106
+  hidden linearVelocity_7 -0.007869993519928987 0.002303391565920798 7.281039656207364e-05
+  hidden angularVelocity_7 -0.0001192283565416753 0.001787786739800487 0.033403612521434936
+  translation 0.6530683823375943 -0.0700562729546418 1.0002004054453708
+  rotation 0.0004386941359577538 -0.001084478235348097 0.999999315726972 -1.8886448225745012
+  window "motion_encoder"
+}

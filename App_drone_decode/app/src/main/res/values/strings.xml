@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Motion Decoder</string>
+    <string name="camera_permission_reason">Camera access is required to observe and classify drone motion.</string>
+</resources>
