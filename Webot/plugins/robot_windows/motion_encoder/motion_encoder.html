@@ -8,7 +8,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>UAV Motion Encoder</title>
-    <link rel="stylesheet" href="motion_encoder.css?v=driver-map-v2-20260824">
+    <link rel="stylesheet" href="motion_encoder.css?v=wire-map-v3-20260825">
   </head>
   <body>
     <div class="app-shell">
@@ -17,7 +17,7 @@
           <span class="brand-mark" aria-hidden="true">M</span>
           <div>
             <h1>UAV Motion Encoder</h1>
-            <p>BCH(63,45) · Visible motion protocol v2</p>
+            <p>BCH(63,45) · Visible motion protocol v3</p>
           </div>
         </div>
         <div id="connection-status" class="status-pill" data-state="waiting">
@@ -109,10 +109,10 @@
             </dl>
 
             <div class="mapping" aria-label="Action-to-bit mapping">
-              <div><span class="symbol h">H</span><code>00</code><span>Backward · Down</span></div>
-              <div><span class="symbol f">F</span><code>01</code><span>Forward · Up</span></div>
-              <div><span class="symbol l">L</span><code>11</code><span>Move left · Q</span></div>
+              <div><span class="symbol f">F</span><code>00</code><span>Forward · Up</span></div>
+              <div><span class="symbol l">L</span><code>01</code><span>Move left · Q</span></div>
               <div><span class="symbol r">R</span><code>10</code><span>Move right · E</span></div>
+              <div><span class="symbol h">H</span><code>11</code><span>Backward · Down</span></div>
             </div>
           </aside>
         </section>
@@ -135,6 +135,6 @@
       </footer>
     </div>
 
-    <script type="module" src="motion_encoder.js?v=driver-map-v2-20260824"></script>
+    <script type="module" src="motion_encoder.js?v=wire-map-v3-20260825"></script>
   </body>
 </html>

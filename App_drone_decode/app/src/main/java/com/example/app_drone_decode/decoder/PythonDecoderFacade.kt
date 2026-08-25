@@ -15,6 +15,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class PythonDecoderFacade(private val appContext: Context) {
+    @Volatile
+    private var activeActionMapping: Map<ActionClass, String> = DecoderProfile().actionMapping
+
     data class ReplayCandidateDecode(
         val index: Int,
         val accepted: Boolean,
@@ -48,6 +51,7 @@ class PythonDecoderFacade(private val appContext: Context) {
             check(response.optBoolean("ok")) {
                 response.optJSONArray("errors")?.toStringList()?.joinToString() ?: "Profile configuration failed"
             }
+            activeActionMapping = profile.actionMapping.toMap()
         }
     }
 
@@ -186,7 +190,7 @@ class PythonDecoderFacade(private val appContext: Context) {
         ok = false,
         slotIndex = slot.slotIndex,
         action = slot.action,
-        symbol = slot.action.symbol,
+        symbol = activeActionMapping[slot.action] ?: "??",
         decoderState = DecoderState.ERROR,
         nextState = DecoderState.ERROR,
         syncScore = 0f,

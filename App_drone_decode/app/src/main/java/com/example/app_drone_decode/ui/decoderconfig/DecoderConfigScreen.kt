@@ -80,7 +80,7 @@ fun DecoderConfigScreen(state: MonitorUiState, viewModel: MonitorViewModel) {
         item {
             SectionSurface("Action mapping") {
                 Text(
-                    "Each action must use one unique two-bit code.",
+                    "Protocol v3: F=00, L=01, R=10, H=11. Opposite actions differ by two bits.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -176,7 +176,7 @@ fun DecoderConfigScreen(state: MonitorUiState, viewModel: MonitorViewModel) {
                 MetricRow("Correction", "t = 3, distance = 7")
                 MetricRow("Generator", "0x782CF")
                 MetricRow("Transport", "63 bits + fixed zero pad")
-                Text("Protocol v1 FEC fields are read-only.", style = MaterialTheme.typography.bodySmall)
+                Text("Protocol v3 FEC fields are read-only.", style = MaterialTheme.typography.bodySmall)
             }
         }
         item {

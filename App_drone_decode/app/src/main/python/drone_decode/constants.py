@@ -1,6 +1,6 @@
-"""Versioned constants for visual motion protocol version 1."""
+"""Versioned constants for visual motion protocol version 3."""
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 3
 BCH_N = 63
 BCH_K = 45
 BCH_T = 3
@@ -12,10 +12,10 @@ DATA_ACTION_COUNT = 32
 SYNC_ACTIONS = ("R", "L", "H", "R", "F", "L", "F", "H")
 
 ACTION_TO_BITS = {
-    "H": (0, 0),
-    "F": (0, 1),
-    "L": (1, 1),
+    "F": (0, 0),
+    "L": (0, 1),
     "R": (1, 0),
+    "H": (1, 1),
 }
 BITS_TO_ACTION = {value: key for key, value in ACTION_TO_BITS.items()}
 

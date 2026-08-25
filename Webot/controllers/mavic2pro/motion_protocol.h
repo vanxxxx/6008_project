@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MOTION_PROTOCOL_VERSION 2
+#define MOTION_PROTOCOL_VERSION 3
 #define MOTION_PAYLOAD_BYTES_PER_FRAME 5
 #define MOTION_SYNC_ACTION_COUNT 8
 #define MOTION_DATA_ACTION_COUNT 32

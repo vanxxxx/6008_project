@@ -7,7 +7,7 @@ from .frame import normalize_action
 
 
 DEFAULT_PROFILE: dict[str, Any] = {
-    "profileVersion": 1,
+    "profileVersion": 4,
     "protocolVersion": PROTOCOL_VERSION,
     "actionDurationMs": 500,
     "idleDurationMs": 500,
@@ -15,7 +15,7 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "minimumSamplesPerSlot": 5,
     "erasureThreshold": 0.55,
     "sync": ["R", "L", "H", "R", "F", "L", "F", "H"],
-    "actionMapping": {"H": "00", "F": "01", "L": "11", "R": "10"},
+    "actionMapping": {"F": "00", "H": "11", "R": "10", "L": "01"},
 }
 
 
@@ -23,7 +23,7 @@ def validate_profile(profile: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     if not isinstance(profile.get("profileVersion"), int) or profile["profileVersion"] < 1:
         errors.append("profileVersion must be a positive integer")
-    if profile.get("protocolVersion") != PROTOCOL_VERSION:
+    if profile.get("protocolVersion") not in {1, 2, PROTOCOL_VERSION}:
         errors.append("Unsupported protocol version")
 
     action_duration = profile.get("actionDurationMs")

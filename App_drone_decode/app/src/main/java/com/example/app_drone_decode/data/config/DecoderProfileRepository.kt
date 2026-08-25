@@ -76,27 +76,32 @@ class DecoderProfileRepository(private val context: Context) {
         val defaults = DecoderProfile()
         val storedProfileId = preferences[Keys.profileId]
         val storedProfileVersion = preferences[Keys.profileVersion]
+        val storedProtocolVersion = preferences[Keys.protocolVersion]
         val storedTrackerId = preferences[Keys.trackerId]
-        // Version 3 changes the built-in physical motion profile from one
-        // continuous 500 ms action to a 500 ms action followed by 500 ms idle.
-        // Custom profiles retain their old duration as an action-only cycle.
-        val migrateBuiltInProfile = storedProfileId == defaults.profileId &&
-            storedProfileVersion != null && storedProfileVersion < defaults.profileVersion
+        // Protocol v3 changes the built-in wire mapping. Only known built-in
+        // profiles are migrated; custom profiles retain their declared version
+        // and mapping so imported or saved observations are never reinterpreted.
+        val migrateBuiltInProfile = storedProfileId == null ||
+            storedProfileId in LEGACY_BUILT_IN_PROFILE_IDS ||
+            (storedProfileId == defaults.profileId &&
+                (storedProfileVersion ?: 0) < defaults.profileVersion)
         val sync = preferences[Keys.sync]
             ?.map { ActionClass.fromShortName(it.toString()) }
             ?.takeIf { it.size == 8 && ActionClass.UNKNOWN !in it }
             ?: defaults.syncActions
         return defaults.copy(
-            profileId = storedProfileId ?: defaults.profileId,
-            profileName = preferences[Keys.profileName] ?: defaults.profileName,
+            profileId = if (migrateBuiltInProfile) defaults.profileId else storedProfileId ?: defaults.profileId,
+            profileName = if (migrateBuiltInProfile) defaults.profileName else
+                preferences[Keys.profileName] ?: defaults.profileName,
             profileVersion = if (migrateBuiltInProfile) defaults.profileVersion else
                 storedProfileVersion ?: defaults.profileVersion,
-            protocolVersion = preferences[Keys.protocolVersion] ?: defaults.protocolVersion,
-            actionMapping = mapOf(
-                ActionClass.HOVER to (preferences[Keys.mappingH] ?: "00"),
-                ActionClass.FORWARD to (preferences[Keys.mappingF] ?: "01"),
-                ActionClass.YAW_LEFT to (preferences[Keys.mappingL] ?: "11"),
-                ActionClass.YAW_RIGHT to (preferences[Keys.mappingR] ?: "10"),
+            protocolVersion = if (migrateBuiltInProfile) defaults.protocolVersion else
+                storedProtocolVersion ?: defaults.protocolVersion,
+            actionMapping = if (migrateBuiltInProfile) defaults.actionMapping else mapOf(
+                ActionClass.HOVER to (preferences[Keys.mappingH] ?: defaults.actionMapping.getValue(ActionClass.HOVER)),
+                ActionClass.FORWARD to (preferences[Keys.mappingF] ?: defaults.actionMapping.getValue(ActionClass.FORWARD)),
+                ActionClass.YAW_LEFT to (preferences[Keys.mappingL] ?: defaults.actionMapping.getValue(ActionClass.YAW_LEFT)),
+                ActionClass.YAW_RIGHT to (preferences[Keys.mappingR] ?: defaults.actionMapping.getValue(ActionClass.YAW_RIGHT)),
             ),
             syncActions = sync,
             actionDurationMs = if (migrateBuiltInProfile) {
@@ -106,7 +111,7 @@ class DecoderProfileRepository(private val context: Context) {
                     ?: preferences[Keys.legacySlotDurationMs]
                     ?: defaults.actionDurationMs
             },
-            idleDurationMs = if (migrateBuiltInProfile || storedProfileId == null) {
+            idleDurationMs = if (migrateBuiltInProfile) {
                 defaults.idleDurationMs
             } else {
                 preferences[Keys.idleDurationMs] ?: 0
@@ -189,5 +194,9 @@ class DecoderProfileRepository(private val context: Context) {
         val classifierId = stringPreferencesKey("classifier_id")
         val classifierVersion = intPreferencesKey("classifier_version")
         val bchProfile = stringPreferencesKey("bch_profile")
+    }
+
+    private companion object {
+        val LEGACY_BUILT_IN_PROFILE_IDS = setOf("protocol-v1-default", "protocol-v2-default")
     }
 }

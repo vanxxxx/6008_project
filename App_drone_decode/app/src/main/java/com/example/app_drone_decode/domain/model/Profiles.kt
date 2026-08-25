@@ -11,14 +11,14 @@ data class CameraCalibration(
 )
 
 data class DecoderProfile(
-    val profileId: String = "protocol-v1-default",
-    val profileName: String = "Protocol v1 pulse/pause motion",
-    val profileVersion: Int = 3,
-    val protocolVersion: Int = 1,
+    val profileId: String = "protocol-v3-default",
+    val profileName: String = "Protocol v3 pulse/pause motion",
+    val profileVersion: Int = 4,
+    val protocolVersion: Int = 3,
     val actionMapping: Map<ActionClass, String> = mapOf(
-        ActionClass.HOVER to "00",
-        ActionClass.FORWARD to "01",
-        ActionClass.YAW_LEFT to "11",
+        ActionClass.HOVER to "11",
+        ActionClass.FORWARD to "00",
+        ActionClass.YAW_LEFT to "01",
         ActionClass.YAW_RIGHT to "10",
     ),
     val syncActions: List<ActionClass> = listOf(
@@ -87,7 +87,7 @@ object DecoderProfileValidator {
     fun validate(profile: DecoderProfile): ProfileValidation {
         val errors = buildList {
             if (profile.profileVersion < 1) add("Profile version must be positive")
-            if (profile.protocolVersion != 1) add("Unsupported protocol version")
+            if (profile.protocolVersion !in 1..3) add("Unsupported protocol version")
             if (profile.actionMapping.keys != setOf(
                     ActionClass.HOVER,
                     ActionClass.FORWARD,
@@ -125,13 +125,14 @@ object DecoderProfileValidator {
             if (profile.calibration.yawSign !in setOf(-1f, 1f)) add("Calibration yaw sign must be -1 or 1")
             if (profile.calibration.targetScale <= 0f) add("Calibration target scale must be positive")
         }
-        val mappingChanged = profile.actionMapping != DecoderProfile().actionMapping ||
-            profile.syncActions != DecoderProfile().syncActions
+        val defaults = DecoderProfile()
+        val mappingChanged = profile.protocolVersion != defaults.protocolVersion ||
+            profile.actionMapping != defaults.actionMapping || profile.syncActions != defaults.syncActions
         return ProfileValidation(
             valid = errors.isEmpty(),
             errors = errors,
             interoperabilityWarning = if (mappingChanged) {
-                "This mapping is incompatible with the protocol v1 reference vector and existing saved data."
+                "This profile differs from the protocol v3 wire mapping and is incompatible with its reference vector."
             } else {
                 null
             },

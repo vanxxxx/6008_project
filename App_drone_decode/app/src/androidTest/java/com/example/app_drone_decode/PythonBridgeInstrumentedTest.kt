@@ -21,6 +21,10 @@ class PythonBridgeInstrumentedTest {
 
         assertEquals(40, actions.size)
         assertEquals("R L H R F L F H", actions.take(8).joinToString(" ") { it.shortName })
+        assertEquals(
+            "RLHRFLFHRRFRLFFHFRRHLRFHLRFHLHHFRLLRRRLR",
+            actions.joinToString("") { it.shortName },
+        )
         assertTrue(actions.none { it.name == "UNKNOWN" })
 
         facade.configureProfile(DecoderProfile()).getOrThrow()

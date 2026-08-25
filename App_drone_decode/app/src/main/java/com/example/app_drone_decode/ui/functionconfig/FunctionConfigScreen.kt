@@ -190,7 +190,7 @@ fun FunctionConfigScreen(state: MonitorUiState, viewModel: MonitorViewModel) {
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Button(onClick = viewModel::injectHelloReference, modifier = Modifier.fillMaxWidth()) {
-                    Text("Inject protocol v1 Hello vector")
+                    Text("Inject protocol v3 Hello vector")
                 }
                 MetricRow(
                     "Data source",

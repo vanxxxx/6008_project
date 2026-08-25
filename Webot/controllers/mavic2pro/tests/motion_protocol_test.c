@@ -13,7 +13,7 @@ static void test_hello_reference_vector(void) {
   assert(strcmp(frame.parity_bits, "100100101101010011") == 0);
   assert(strcmp(frame.codeword_bits, "101000100100001100101011011000110110001101111100100101101010011") == 0);
   assert(strcmp(frame.padded_bits, "1010001001000011001010110110001101100011011111001001011010100110") == 0);
-  assert(strcmp(frame.action_codes, "RLHRFLFHRRHRFHHLHRRLFRHLFRHLFLLHRFFRRRFR") == 0);
+  assert(strcmp(frame.action_codes, "RLHRFLFHRRFRLFFHFRRHLRFHLRFHLHHFRLLRRRLR") == 0);
   assert(motion_codeword_is_valid(frame.codeword));
 }
 

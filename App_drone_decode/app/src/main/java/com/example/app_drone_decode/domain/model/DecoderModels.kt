@@ -1,9 +1,9 @@
 package com.example.app_drone_decode.domain.model
 
 enum class ActionClass(val shortName: String, val symbol: String) {
-    HOVER("H", "00"),
-    FORWARD("F", "01"),
-    YAW_LEFT("L", "11"),
+    HOVER("H", "11"),
+    FORWARD("F", "00"),
+    YAW_LEFT("L", "01"),
     YAW_RIGHT("R", "10"),
     UNKNOWN("?", "??");
 

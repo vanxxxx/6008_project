@@ -580,7 +580,7 @@ class MonitorViewModel(
                     rawSymbols = emptyList(),
                 )
             }
-            appendLog(LogSeverity.WARNING, "Injected data session started with the protocol v1 Hello vector")
+            appendLog(LogSeverity.WARNING, "Injected data session started with the protocol v3 Hello vector")
             actions.forEachIndexed { index, action ->
                 slotChannel.send(SlotObservation(index.toLong(), action, 1f, false, 15))
             }
@@ -628,7 +628,7 @@ class MonitorViewModel(
         }
         viewModelScope.launch {
             container.profileRepository.restoreDefaults()
-            mutableState.update { it.copy(configMessage = "Protocol v1 defaults restored.") }
+            mutableState.update { it.copy(configMessage = "Protocol v3 defaults restored.") }
         }
     }
 
@@ -788,7 +788,7 @@ class MonitorViewModel(
             result?.accepted == true -> "Accepted frame ${result.sequence}: ${result.payloadText}"
             result != null -> "Rejected frame: ${result.rejectionReason}"
             slot.erased -> "Slot ${slot.slotIndex} is an explicit erasure"
-            else -> "Slot ${slot.slotIndex}: ${slot.action.shortName} / ${slot.action.symbol}"
+            else -> "Slot ${slot.slotIndex}: ${slot.action.shortName} / ${event.symbol}"
         }
         val entry = DecoderLogEntry(
             timestampEpochMs = System.currentTimeMillis(),

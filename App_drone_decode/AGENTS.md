@@ -175,10 +175,10 @@ These are mandatory unless the user explicitly requests a protocol revision:
 
 ```text
 ACTION MAP
-00 = HOVER (H)
-01 = FORWARD (F)
-11 = YAW_LEFT (L)
-10 = YAW_RIGHT (R)
+00 = FORWARD (F)
+01 = MOVE_LEFT (L)
+10 = MOVE_RIGHT (R)
+11 = BACKWARD (H, legacy enum name HOVER)
 
 SYNC
 R L H R F L F H
@@ -518,4 +518,3 @@ The first usable release is complete only when:
 - Do not add transmitter/drone-control features unless the user explicitly expands scope.
 - When changing protocol behavior, update Python tests, Kotlin bridge tests, profile versioning, UI descriptions and reference documentation together.
 - Before handing off, run the relevant build/tests/lint and report both what passed and what could not be exercised.
-

@@ -90,13 +90,13 @@ bool motion_encode_frame(const uint8_t *payload, size_t payload_length, uint8_t 
   for (size_t symbol_index = 0; symbol_index < MOTION_DATA_ACTION_COUNT; ++symbol_index) {
     const int shift = 62 - (int)(symbol_index * 2);
     const uint8_t symbol = (uint8_t)((frame->padded_codeword >> shift) & 0x3ULL);
-    MotionAction action = MOTION_ACTION_HOVER;
+    MotionAction action = MOTION_ACTION_FORWARD;
     if (symbol == 1)
-      action = MOTION_ACTION_FORWARD;
+      action = MOTION_ACTION_MOVE_LEFT;
     else if (symbol == 2)
       action = MOTION_ACTION_MOVE_RIGHT;
     else if (symbol == 3)
-      action = MOTION_ACTION_MOVE_LEFT;
+      action = MOTION_ACTION_HOVER;
     frame->actions[MOTION_SYNC_ACTION_COUNT + symbol_index] = action;
   }
 

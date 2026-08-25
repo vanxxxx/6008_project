@@ -62,21 +62,21 @@ A frame carries up to five payload bytes.
 
 ## 3. Action Alphabet
 
-The initial four-action mapping is:
+The final protocol v3 four-action mapping is:
 
 | 2-bit symbol | Action | Short name |
 |---|---|---|
-| `00` | Backward translation | `H` (legacy wire name) |
-| `01` | Forward | `F` |
-| `11` | Translate left | `L` |
+| `00` | Forward | `F` |
+| `01` | Translate left | `L` |
 | `10` | Translate right | `R` |
+| `11` | Backward translation | `H` (legacy wire name) |
 
-The mapping is Gray-like: neighboring entries can be arranged so that common confusions may differ by only one bit.
+The mapping assigns Hamming distance 2 to opposite action pairs (`F/H` and
+`L/R`). Cross-axis confusions differ by one bit, so a typical non-opposite
+misclassification contributes one BCH bit error instead of two.
 
-The final mapping should be selected from measured camera classification data. If the classifier frequently confuses two actions, assigning those actions bit patterns with Hamming distance 1 reduces the cost of that error.
-
-The letters and bit mapping are retained for protocol compatibility. In physical
-profile version 3, `H` no longer means hover and `L/R` no longer mean yaw. The
+The letters and bit mapping define wire protocol version 3. In physical profile
+version 4, `H` no longer means hover and `L/R` no longer mean yaw. The
 idle interval is not a fifth symbol and carries no bits.
 
 ### Important rule for backward motion and idle
@@ -103,7 +103,7 @@ All symbols are transmitted in fixed-duration cycles of length `T`:
 T = action_duration A + idle_duration I
 ```
 
-The physical profile version 3 default is `A = 500 ms` and `I = 500 ms`.
+The physical profile version 4 default is `A = 500 ms` and `I = 500 ms`.
 The action is applied only during the first phase; the transmitter then holds
 position during the idle phase. The receiver preserves one symbol position per
 complete action-plus-idle cycle and uses the idle phase as a local motion baseline.
@@ -262,7 +262,9 @@ Examples:
 | 4 erased actions | Not guaranteed |
 | 4 unknown bit errors | Not guaranteed |
 
-A misclassified action may create one or two bit errors depending on the source and destination symbols.
+A cross-axis misclassification creates one bit error. Confusing an action with
+its opposite (`F/H` or `L/R`) creates two bit errors, but the protocol v3
+mapping assumes those opposite-action confusions are substantially less likely.
 
 ---
 
@@ -433,10 +435,10 @@ Collect exactly 32 data action slots.
 Each action becomes:
 
 ```text
-H -> 00
-F -> 01
-L -> 11
+F -> 00
+L -> 01
 R -> 10
+H -> 11
 ? -> ??
 ```
 
@@ -624,10 +626,10 @@ Split into 2-bit symbols:
 Map to actions:
 
 ```text
-R R H R F H H L
-H R R L F R H L
-F R H L F L L H
-R F F R R R F R
+R R F R L F F H
+F R R H L R F H
+L R F H L H H F
+R L L R R R L R
 ```
 
 These are the 32 data actions.
@@ -649,20 +651,20 @@ SYNC:
 R L H R F L F H
 
 DATA:
-R R H R F H H L
-H R R L F R H L
-F R H L F L L H
-R F F R R R F R
+R R F R L F F H
+F R R H L R F H
+L R F H L H H F
+R L L R R R L R
 ```
 
 As a single 40-action sequence:
 
 ```text
 R L H R F L F H
-R R H R F H H L
-H R R L F R H L
-F R H L F L L H
-R F F R R R F R
+R R F R L F F H
+F R R H L R F H
+L R F H L H H F
+R L L R R R L R
 ```
 
 Expected decoder output:
@@ -1058,7 +1060,9 @@ actual L
 actual R
 ```
 
-The 2-bit action mapping can then be reassigned so that the most commonly confused pairs have a small Hamming distance.
+Use this matrix to verify the protocol v3 assumption that opposite-action
+confusions are rare. The v3 mapping is fixed; any future reassignment requires
+a new wire-protocol version and new reference vectors.
 
 ### Tune the SYNC sequence empirically
 
@@ -1081,11 +1085,11 @@ Before deployment in an experiment, evaluate candidate SYNC words against:
 ## 18. Reference Constants
 
 ```text
-ACTION MAP
-00 = H
-01 = F
-11 = L
+ACTION MAP (PROTOCOL V3)
+00 = F
+01 = L
 10 = R
+11 = H
 
 SYNC
 R L H R F L F H
@@ -1125,7 +1129,7 @@ FRAME
 CAPACITY
 0..5 payload bytes per frame
 
-DURATION (PHYSICAL PROFILE V3 DEFAULT)
+DURATION (PHYSICAL PROFILE V4 DEFAULT)
 A = 0.5 s active motion
 I = 0.5 s no-action reference
 T = A + I = 1.0 s per symbol
@@ -1155,17 +1159,17 @@ PADDED 64 BITS
 1010001001000011001010110110001101100011011111001001011010100110
 
 DATA ACTIONS
-R R H R F H H L
-H R R L F R H L
-F R H L F L L H
-R F F R R R F R
+R R F R L F F H
+F R R H L R F H
+L R F H L H H F
+R L L R R R L R
 
 FULL FRAME
 R L H R F L F H
-R R H R F H H L
-H R R L F R H L
-F R H L F L L H
-R F F R R R F R
+R R F R L F F H
+F R R H L R F H
+L R F H L H H F
+R L L R R R L R
 
 EXPECTED OUTPUT
 "Hello"

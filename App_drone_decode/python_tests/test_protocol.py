@@ -15,11 +15,27 @@ HELLO_PARITY = "100100101101010011"
 HELLO_CODEWORD = HELLO_INFO + HELLO_PARITY
 HELLO_PADDED = HELLO_CODEWORD + "0"
 HELLO_DATA_ACTIONS = (
-    "R", "R", "H", "R", "F", "H", "H", "L",
-    "H", "R", "R", "L", "F", "R", "H", "L",
-    "F", "R", "H", "L", "F", "L", "L", "H",
-    "R", "F", "F", "R", "R", "R", "F", "R",
+    "R", "R", "F", "R", "L", "F", "F", "H",
+    "F", "R", "R", "H", "L", "R", "F", "H",
+    "L", "R", "F", "H", "L", "H", "H", "F",
+    "R", "L", "L", "R", "R", "R", "L", "R",
 )
+
+
+def test_protocol_v3_mapping_separates_opposite_actions():
+    assert ACTION_TO_BITS == {
+        "F": (0, 0),
+        "L": (0, 1),
+        "R": (1, 0),
+        "H": (1, 1),
+    }
+
+    def distance(first: str, second: str) -> int:
+        return sum(left != right for left, right in zip(ACTION_TO_BITS[first], ACTION_TO_BITS[second]))
+
+    assert distance("F", "H") == 2
+    assert distance("L", "R") == 2
+    assert all(distance(first, second) == 1 for first, second in (("F", "L"), ("F", "R"), ("H", "L"), ("H", "R")))
 
 
 def test_hello_reference_vector():
@@ -57,7 +73,7 @@ def test_four_erased_actions_are_rejected_without_slot_shifting():
 
 def test_one_misclassified_action_is_corrected():
     damaged = list(HELLO_DATA_ACTIONS)
-    damaged[0] = "L"
+    damaged[0] = "F"
     result = decode_data_actions(damaged)
     assert result.accepted
     assert result.payload_ascii == "Hello"
@@ -146,9 +162,9 @@ def test_replay_candidate_batch_uses_generic_bch_validation():
 
 def test_replay_soft_decision_recovers_one_low_confidence_action():
     damaged = list(HELLO_DATA_ACTIONS)
-    damaged[0] = "F"
-    damaged[1] = "H"
-    damaged[2] = "R"
+    damaged[0] = "L"
+    damaged[1] = "F"
+    damaged[2] = "L"
     assert not decode_data_actions(damaged).accepted
     confidences = [0.9] * 32
     confidences[0] = 0.01
@@ -164,7 +180,7 @@ def test_replay_soft_decision_combines_multiple_visual_alternatives():
     damaged = list(HELLO_DATA_ACTIONS)
     alternatives = damaged.copy()
     confidences = [0.9] * 32
-    one_bit_alternative = {"H": "F", "F": "H", "L": "R", "R": "L"}
+    one_bit_alternative = {"F": "L", "L": "F", "H": "R", "R": "H"}
     for position in range(6):
         alternatives[position] = damaged[position]
         damaged[position] = one_bit_alternative[damaged[position]]
@@ -185,7 +201,7 @@ def test_replay_soft_decision_combines_multiple_visual_alternatives():
 
 def test_nonzero_transport_padding_is_rejected():
     damaged = list(HELLO_DATA_ACTIONS)
-    damaged[-1] = "L"  # R=10 to L=11 changes only the fixed transport padding bit.
+    damaged[-1] = "H"  # R=10 to H=11 changes only the fixed transport padding bit.
 
     result = decode_data_actions(damaged)
 
