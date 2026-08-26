@@ -17,6 +17,8 @@ internal class PulsePauseReplayAligner(
     private val profile: DecoderProfile,
     private val requestedPhaseSteps: Int,
 ) {
+    private val actionBinCount = (BIN_COUNT * profile.actionDurationMs / profile.symbolDurationMs)
+        .coerceIn(1, BIN_COUNT - 1)
     fun search(observations: List<MotionObservation>): ReplaySyncSearchResult {
         val signals = buildSignals(observations)
         if (signals.size < MINIMUM_SIGNAL_SAMPLES) {
@@ -47,12 +49,12 @@ internal class PulsePauseReplayAligner(
                     val deltaColumns = IntArray(channels.size) { index ->
                         BIN_COUNT * SIGNAL_CHANNEL_COUNT + channels[index]
                     }
-                    val actionColumns = IntArray(ACTION_BIN_COUNT * channels.size) { index ->
+            val actionColumns = IntArray(actionBinCount * channels.size) { index ->
                         val phase = index / channels.size
                         phase * SIGNAL_CHANNEL_COUNT + channels[index % channels.size]
                     }
-                    val idleColumns = IntArray((BIN_COUNT - ACTION_BIN_COUNT) * channels.size) { index ->
-                        val phase = ACTION_BIN_COUNT + index / channels.size
+            val idleColumns = IntArray((BIN_COUNT - actionBinCount) * channels.size) { index ->
+                val phase = actionBinCount + index / channels.size
                         phase * SIGNAL_CHANNEL_COUNT + channels[index % channels.size]
                     }
                     listOf(
@@ -262,8 +264,8 @@ internal class PulsePauseReplayAligner(
             }
             val deltaOffset = BIN_COUNT * SIGNAL_CHANNEL_COUNT
             for (channel in 0 until SIGNAL_CHANNEL_COUNT) {
-                val actionMedian = median((0 until ACTION_BIN_COUNT).map { phaseValues[it][channel] })
-                val idleMedian = median((ACTION_BIN_COUNT until BIN_COUNT).map { phaseValues[it][channel] })
+                val actionMedian = median((0 until actionBinCount).map { phaseValues[it][channel] })
+                val idleMedian = median((actionBinCount until BIN_COUNT).map { phaseValues[it][channel] })
                 rows[slot][deltaOffset + channel] = actionMedian - idleMedian
             }
         }
@@ -425,7 +427,6 @@ internal class PulsePauseReplayAligner(
     private companion object {
         const val FRAME_ACTION_COUNT = 40
         const val BIN_COUNT = 8
-        const val ACTION_BIN_COUNT = 4
         const val SCENE_CHANNEL_COUNT = 4
         const val POSE_CHANNEL_COUNT = 6
         const val RELATIVE_CHANNEL_COUNT = 4

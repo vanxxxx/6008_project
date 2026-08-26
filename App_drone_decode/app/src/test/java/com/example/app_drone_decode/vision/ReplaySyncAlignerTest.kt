@@ -3,6 +3,7 @@ package com.example.app_drone_decode.vision
 import com.example.app_drone_decode.domain.model.ActionClass
 import com.example.app_drone_decode.domain.model.DecoderProfile
 import com.example.app_drone_decode.domain.model.MotionObservation
+import com.example.app_drone_decode.domain.model.MotionReferenceMode
 import com.example.app_drone_decode.domain.model.NormalizedRect
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -13,6 +14,7 @@ class ReplaySyncAlignerTest {
     private val profile = DecoderProfile(
         actionDurationMs = 100,
         idleDurationMs = 0,
+        motionReferenceMode = MotionReferenceMode.STATIONARY_HOLD,
         stableWindowFraction = 0.6f,
         minimumSamplesPerSlot = 3,
         erasureThreshold = 0.55f,

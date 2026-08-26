@@ -3,6 +3,8 @@ package com.example.app_drone_decode.vision
 import com.example.app_drone_decode.domain.model.ActionClass
 import com.example.app_drone_decode.domain.model.DecoderProfile
 import com.example.app_drone_decode.domain.model.MotionObservation
+import com.example.app_drone_decode.domain.model.MotionReferenceMode
+import com.example.app_drone_decode.domain.model.CameraCalibration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -12,6 +14,7 @@ class SlotAggregatorTest {
     private val profile = DecoderProfile(
         actionDurationMs = 100,
         idleDurationMs = 0,
+        motionReferenceMode = MotionReferenceMode.STATIONARY_HOLD,
         stableWindowFraction = 0.6f,
         minimumSamplesPerSlot = 1,
         erasureThreshold = 0.55f,
@@ -82,6 +85,27 @@ class SlotAggregatorTest {
         assertFalse(result.single().erased)
     }
 
+    @Test
+    fun movingCenterlineCancelsCommonForwardVelocityBeforeClassifyingLateralAction() {
+        val centerlineProfile = profile.copy(
+            actionDurationMs = 100,
+            recoveryDurationMs = 100,
+            motionReferenceMode = MotionReferenceMode.MOVING_CENTERLINE_RETURN,
+            forwardSpeedThresholdPerSec = 0.1f,
+            erasureThreshold = 0.5f,
+            calibration = CameraCalibration(longitudinalAxisX = 1f, longitudinalAxisY = 0f, calibrated = true),
+        )
+        val aggregator = SlotAggregator(centerlineProfile)
+        aggregator.reset(0L)
+        // Both phases travel forward at 0.20 /s; only the lateral action/return pair differs.
+        aggregator.add(movingObservation(50_000_000L, 0.20f, -0.25f))
+        aggregator.add(movingObservation(150_000_000L, 0.20f, -0.05f))
+        val result = aggregator.add(movingObservation(250_000_000L, 0.20f, 0f))
+
+        assertEquals(ActionClass.YAW_LEFT, result.single().action)
+        assertFalse(result.single().erased)
+    }
+
     private fun observation(timestampNs: Long, action: ActionClass, visible: Boolean = true) = MotionObservation(
         timestampNs = timestampNs,
         visible = visible,
@@ -91,5 +115,14 @@ class SlotAggregatorTest {
         yawRateDegPerSec = if (visible) 0f else null,
         actionProbabilities = ActionClass.entries.associateWith { if (it == action) 1f else 0f },
         confidence = if (visible) 1f else 0f,
+    )
+
+    private fun movingObservation(timestampNs: Long, velocityX: Float, velocityY: Float) = observation(
+        timestampNs,
+        ActionClass.UNKNOWN,
+    ).copy(
+        relativeVelocityXPerSec = velocityX,
+        relativeVelocityYPerSec = velocityY,
+        confidence = 1f,
     )
 }

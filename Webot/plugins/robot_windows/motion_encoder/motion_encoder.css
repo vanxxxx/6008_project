@@ -220,6 +220,22 @@ input:disabled {
   font-size: 12px;
 }
 
+.route-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 120px;
+  align-items: end;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.route-heading .field-label {
+  margin: 0 0 4px;
+}
+
 .controls-row {
   display: flex;
   align-items: flex-end;
@@ -626,6 +642,14 @@ footer {
   .timing-controls {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .route-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .route-heading {
+    grid-column: 1 / -1;
   }
 
   .timing-reset {

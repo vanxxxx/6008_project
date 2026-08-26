@@ -10,10 +10,17 @@ data class CameraCalibration(
     val calibrated: Boolean = false,
 )
 
+enum class MotionReferenceMode {
+    /** Legacy v4 behavior: the second phase holds the last stationary reference point. */
+    STATIONARY_HOLD,
+    /** Physical profile v5: the second phase returns to an A→B centerline which continues moving. */
+    MOVING_CENTERLINE_RETURN,
+}
+
 data class DecoderProfile(
-    val profileId: String = "protocol-v3-default",
-    val profileName: String = "Protocol v3 pulse/pause motion",
-    val profileVersion: Int = 4,
+    val profileId: String = "protocol-v3-centerline-v5",
+    val profileName: String = "Protocol v3 moving-centerline motion",
+    val profileVersion: Int = 5,
     val protocolVersion: Int = 3,
     val actionMapping: Map<ActionClass, String> = mapOf(
         ActionClass.HOVER to "11",
@@ -32,6 +39,10 @@ data class DecoderProfile(
         ActionClass.HOVER,
     ),
     val actionDurationMs: Int = 500,
+    /** v5 return phase. It is deliberately distinct from v4's idleDurationMs. */
+    val recoveryDurationMs: Int = 500,
+    val motionReferenceMode: MotionReferenceMode = MotionReferenceMode.MOVING_CENTERLINE_RETURN,
+    /** v4 stationary-hold phase; retained to avoid reinterpreting saved profiles. */
     val idleDurationMs: Int = 500,
     val stableWindowFraction: Float = 0.60f,
     val minimumSamplesPerSlot: Int = 5,
@@ -49,12 +60,28 @@ data class DecoderProfile(
     val roi: NormalizedRect = NormalizedRect(0.10f, 0.10f, 0.90f, 0.90f),
     val trackerImplementationId: String = "adaptive-appearance-opencv",
     val trackerImplementationVersion: Int = 2,
-    val classifierImplementationId: String = "pulse-pause-translation-v2",
-    val classifierImplementationVersion: Int = 2,
+    val classifierImplementationId: String = "centerline-action-return-v3",
+    val classifierImplementationVersion: Int = 3,
     val bchProfile: String = "BCH(63,45), t=3, g=0x782CF",
     val calibration: CameraCalibration = CameraCalibration(),
 ) {
-    val symbolDurationMs: Int get() = actionDurationMs + idleDurationMs
+    val secondaryPhaseDurationMs: Int get() = when (motionReferenceMode) {
+        MotionReferenceMode.STATIONARY_HOLD -> idleDurationMs
+        MotionReferenceMode.MOVING_CENTERLINE_RETURN -> recoveryDurationMs
+    }
+    val symbolDurationMs: Int get() = actionDurationMs + secondaryPhaseDurationMs
+
+    companion object {
+        fun legacyStationaryHoldProfile() = DecoderProfile(
+            profileId = "protocol-v3-default",
+            profileName = "Protocol v3 stationary-hold motion (legacy)",
+            profileVersion = 4,
+            recoveryDurationMs = 500,
+            motionReferenceMode = MotionReferenceMode.STATIONARY_HOLD,
+            classifierImplementationId = "pulse-pause-translation-v2",
+            classifierImplementationVersion = 2,
+        )
+    }
 }
 
 data class FunctionSettings(
@@ -103,6 +130,7 @@ object DecoderProfileValidator {
             }
             if (profile.actionDurationMs !in 100..2_000) add("Action duration must be 100–2000 ms")
             if (profile.idleDurationMs !in 0..2_000) add("Idle duration must be 0–2000 ms")
+            if (profile.recoveryDurationMs !in 0..2_000) add("Recovery duration must be 0–2000 ms")
             if (profile.symbolDurationMs > 4_000) add("Action plus idle duration must not exceed 4000 ms")
             if (profile.stableWindowFraction !in 0.2f..0.9f) add("Stable window must be 20–90%")
             if (profile.minimumSamplesPerSlot !in 1..60) add("Minimum samples must be 1–60")

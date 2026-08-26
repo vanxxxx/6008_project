@@ -452,6 +452,15 @@ private fun TrackingOverlay(state: MonitorUiState) {
             }
         }
         if (state.trajectory.size > 1) {
+            val centerlineStart = state.trajectory.first()
+            val centerlineEnd = state.trajectory.last()
+            drawLine(
+                color = Color(0xFF8BA7FF).copy(alpha = 0.72f),
+                start = Offset(centerlineStart.first * size.width, centerlineStart.second * size.height),
+                end = Offset(centerlineEnd.first * size.width, centerlineEnd.second * size.height),
+                strokeWidth = 1.5f,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(9f, 7f)),
+            )
             val path = Path()
             state.trajectory.forEachIndexed { index, point ->
                 val offset = Offset(point.first * size.width, point.second * size.height)

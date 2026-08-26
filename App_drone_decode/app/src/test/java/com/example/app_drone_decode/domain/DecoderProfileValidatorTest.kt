@@ -3,6 +3,7 @@ package com.example.app_drone_decode.domain
 import com.example.app_drone_decode.domain.model.ActionClass
 import com.example.app_drone_decode.domain.model.DecoderProfile
 import com.example.app_drone_decode.domain.model.DecoderProfileValidator
+import com.example.app_drone_decode.domain.model.MotionReferenceMode
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -18,6 +19,7 @@ class DecoderProfileValidatorTest {
         assertEquals("11", profile.actionMapping.getValue(ActionClass.HOVER))
         assertEquals("10", profile.actionMapping.getValue(ActionClass.YAW_RIGHT))
         assertEquals("01", profile.actionMapping.getValue(ActionClass.YAW_LEFT))
+        assertEquals(MotionReferenceMode.MOVING_CENTERLINE_RETURN, profile.motionReferenceMode)
     }
 
     @Test
@@ -37,5 +39,14 @@ class DecoderProfileValidatorTest {
     fun malformedSyncIsRejected() {
         val profile = DecoderProfile(syncActions = listOf(ActionClass.HOVER, ActionClass.UNKNOWN))
         assertFalse(DecoderProfileValidator.validate(profile).valid)
+    }
+
+    @Test
+    fun legacyStationaryProfileKeepsItsPhysicalMeaning() {
+        val profile = DecoderProfile.legacyStationaryHoldProfile()
+
+        assertEquals(MotionReferenceMode.STATIONARY_HOLD, profile.motionReferenceMode)
+        assertEquals(4, profile.profileVersion)
+        assertTrue(DecoderProfileValidator.validate(profile).valid)
     }
 }

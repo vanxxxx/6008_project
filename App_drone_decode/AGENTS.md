@@ -169,6 +169,16 @@ IDLE / SEARCH_SYNC / COLLECT_FRAME / BCH_DECODE
 
 `UNKNOWN` is a first-class erasure. Tracking loss, insufficient samples, low confidence, or an ambiguous classification must never become `HOVER`.
 
+## 6.5 Physical profile v5: moving centerline return
+
+Wire protocol v3 is unchanged. Physical profile v5 uses a 0.5 s encoded action
+followed by a 0.5 s return to an advancing A-to-B centerline; the return is not
+a symbol. For v5, aggregate visual observations from both phases and classify
+their velocity contrast so common route motion is removed. Never use Webots GPS,
+WWI status, planned coordinates, or encoded action arrays as a production
+decoder input. Preserve stationary-hold v4 profiles and their `idleDurationMs`
+meaning; v5 uses an explicit `recoveryDurationMs` and a versioned profile mode.
+
 ## 7. Protocol invariants from Decode_algorithm.md
 
 These are mandatory unless the user explicitly requests a protocol revision:

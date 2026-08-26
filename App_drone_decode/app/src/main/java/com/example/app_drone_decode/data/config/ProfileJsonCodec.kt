@@ -4,12 +4,13 @@ import com.example.app_drone_decode.domain.model.ActionClass
 import com.example.app_drone_decode.domain.model.CameraCalibration
 import com.example.app_drone_decode.domain.model.DecoderProfile
 import com.example.app_drone_decode.domain.model.NormalizedRect
+import com.example.app_drone_decode.domain.model.MotionReferenceMode
 import org.json.JSONArray
 import org.json.JSONObject
 
 object ProfileJsonCodec {
     fun encode(profile: DecoderProfile): String = JSONObject()
-        .put("schemaVersion", 2)
+        .put("schemaVersion", 3)
         .put("profileId", profile.profileId)
         .put("profileName", profile.profileName)
         .put("profileVersion", profile.profileVersion)
@@ -22,6 +23,8 @@ object ProfileJsonCodec {
         })
         .put("sync", JSONArray(profile.syncActions.map { it.shortName }))
         .put("actionDurationMs", profile.actionDurationMs)
+        .put("recoveryDurationMs", profile.recoveryDurationMs)
+        .put("motionReferenceMode", profile.motionReferenceMode.name)
         .put("idleDurationMs", profile.idleDurationMs)
         .put("stableWindowFraction", profile.stableWindowFraction)
         .put("minimumSamplesPerSlot", profile.minimumSamplesPerSlot)
@@ -59,7 +62,7 @@ object ProfileJsonCodec {
     fun decode(text: String): DecoderProfile {
         val json = JSONObject(text)
         val schemaVersion = json.getInt("schemaVersion")
-        require(schemaVersion in 1..2) { "Unsupported profile schema" }
+        require(schemaVersion in 1..3) { "Unsupported profile schema" }
         val defaults = DecoderProfile()
         val mapping = json.getJSONObject("actionMapping")
         val sync = json.getJSONArray("sync")
@@ -81,6 +84,17 @@ object ProfileJsonCodec {
                 json.getInt("actionDurationMs")
             } else {
                 json.getInt("slotDurationMs")
+            },
+            recoveryDurationMs = if (schemaVersion >= 3) {
+                json.optInt("recoveryDurationMs", defaults.recoveryDurationMs)
+            } else {
+                json.optInt("idleDurationMs", defaults.recoveryDurationMs)
+            },
+            motionReferenceMode = if (schemaVersion >= 3) {
+                MotionReferenceMode.entries.firstOrNull { it.name == json.optString("motionReferenceMode") }
+                    ?: defaults.motionReferenceMode
+            } else {
+                MotionReferenceMode.STATIONARY_HOLD
             },
             idleDurationMs = if (schemaVersion >= 2) json.optInt("idleDurationMs", 0) else 0,
             stableWindowFraction = json.getDouble("stableWindowFraction").toFloat(),

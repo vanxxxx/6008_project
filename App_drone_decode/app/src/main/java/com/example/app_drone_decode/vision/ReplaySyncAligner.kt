@@ -43,7 +43,7 @@ class ReplaySyncAligner(
             return failure(0f, "Too few visual observations for slot synchronization")
         }
         val ordered = observations.sortedBy(MotionObservation::timestampNs)
-        if (profile.idleDurationMs > 0) {
+        if (profile.secondaryPhaseDurationMs > 0) {
             return PulsePauseReplayAligner(profile, phaseSteps).search(ordered)
         }
         val classified = searchClassified(ordered)

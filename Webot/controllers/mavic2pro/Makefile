@@ -17,7 +17,7 @@
 # You may add some variable definitions hereafter to customize the build process
 # See documentation in $(WEBOTS_HOME_PATH)/resources/Makefile.include
 
-C_SOURCES = mavic2pro.c motion_protocol.c
+C_SOURCES = mavic2pro.c motion_protocol.c motion_route.c
 
 # Do not modify the following: this includes Webots global Makefile.include
 null :=

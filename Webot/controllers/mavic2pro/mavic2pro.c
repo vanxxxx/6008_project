@@ -43,6 +43,7 @@
 #include <webots/plugins/robot_window/robot_wwi.h>
 
 #include "motion_protocol.h"
+#include "motion_route.h"
 
 #define CLAMP(value, low, high) ((value) < (low) ? (low) : ((value) > (high) ? (high) : (value)))
 
@@ -52,6 +53,20 @@
 #define MAX_ACTION_DURATION_MS 5000
 #define MIN_IDLE_DURATION_MS 0
 #define MAX_IDLE_DURATION_MS 5000
+#define ROUTE_ALIGN_TIMEOUT_SECONDS 15.0
+#define ROUTE_SETTLE_TIMEOUT_SECONDS 10.0
+#define ROUTE_HEADING_TOLERANCE_RAD (5.0 * 3.14159265358979323846 / 180.0)
+#define ROUTE_YAW_RATE_TOLERANCE_RAD_PER_SEC (5.0 * 3.14159265358979323846 / 180.0)
+#define ROUTE_ARRIVAL_DISTANCE_METERS 0.20
+#define ROUTE_ARRIVAL_SPEED_METERS_PER_SEC 0.10
+#define ROUTE_STABLE_SECONDS 1.0
+
+typedef enum {
+  ROUTE_STATE_NONE,
+  ROUTE_STATE_ALIGNING,
+  ROUTE_STATE_TRANSMITTING,
+  ROUTE_STATE_SETTLING,
+} RouteExecutionState;
 
 typedef struct {
   MotionTransmission transmission;
@@ -63,6 +78,12 @@ typedef struct {
   double last_status_at;
   size_t last_reported_slot;
   bool last_reported_action_phase;
+  bool route_enabled;
+  MotionRoutePlan route;
+  double route_altitude;
+  RouteExecutionState route_state;
+  double route_state_started_at;
+  double route_stable_since;
 } MotionExecution;
 
 static double wrap_angle(double angle) {
@@ -130,15 +151,16 @@ static void send_error(const char *code, const char *message) {
 }
 
 static void send_ready(const MotionExecution *execution) {
-  char response[640];
+  char response[768];
   snprintf(
     response,
     sizeof(response),
-    "{\"type\":\"ready\",\"protocolVersion\":%d,\"maxBytes\":%d,"
+    "{\"type\":\"ready\",\"protocolVersion\":%d,\"physicalProfileVersion\":%d,\"supportsRoute\":true,\"maxBytes\":%d,"
     "\"defaultActionMs\":%d,\"minActionMs\":%d,\"maxActionMs\":%d,"
     "\"defaultIdleMs\":%d,\"minIdleMs\":%d,\"maxIdleMs\":%d,"
     "\"defaultSlotMs\":%d,\"minSlotMs\":%d,\"maxSlotMs\":%d,\"running\":%s}",
     MOTION_PROTOCOL_VERSION,
+    MOTION_PHYSICAL_PROFILE_VERSION,
     MOTION_MAX_MESSAGE_BYTES,
     DEFAULT_ACTION_DURATION_MS,
     MIN_ACTION_DURATION_MS,
@@ -154,11 +176,34 @@ static void send_ready(const MotionExecution *execution) {
 }
 
 static void send_encoding(const MotionExecution *execution) {
-  char response[1400];
+  char response[1800];
   const size_t total_actions = execution->transmission.frame_count * MOTION_FRAME_ACTION_COUNT;
   const int cycle_duration_ms = execution->action_duration_ms + execution->idle_duration_ms;
   const double duration_seconds = total_actions * cycle_duration_ms / 1000.0;
-  snprintf(
+  if (execution->route_enabled) {
+    snprintf(
+      response,
+      sizeof(response),
+      "{\"type\":\"encoding-start\",\"byteLength\":%zu,\"frameCount\":%zu,"
+      "\"actionDurationMs\":%d,\"idleDurationMs\":%d,\"cycleDurationMs\":%d,"
+      "\"totalActions\":%zu,\"durationSeconds\":%.3f,\"physicalProfileVersion\":5,"
+      "\"routeStartX\":%.3f,\"routeStartY\":%.3f,\"destinationX\":%.3f,\"destinationY\":%.3f,"
+      "\"routeDistanceMeters\":%.3f,\"nominalSpeedMetersPerSec\":%.4f}",
+      execution->transmission.byte_length,
+      execution->transmission.frame_count,
+      execution->action_duration_ms,
+      execution->idle_duration_ms,
+      cycle_duration_ms,
+      total_actions,
+      duration_seconds,
+      execution->route.start.x,
+      execution->route.start.y,
+      execution->route.destination.x,
+      execution->route.destination.y,
+      execution->route.distance_meters,
+      execution->route.nominal_speed_meters_per_sec);
+  } else {
+    snprintf(
     response,
     sizeof(response),
     "{\"type\":\"encoding-start\",\"byteLength\":%zu,\"frameCount\":%zu,"
@@ -171,6 +216,7 @@ static void send_encoding(const MotionExecution *execution) {
     cycle_duration_ms,
     total_actions,
     duration_seconds);
+  }
   wb_robot_wwi_send_text(response);
 
   for (size_t index = 0; index < execution->transmission.frame_count; ++index) {
@@ -200,6 +246,7 @@ static void stop_execution(MotionExecution *execution, const char *reason) {
   if (!execution->running)
     return;
   execution->running = false;
+  execution->route_state = ROUTE_STATE_NONE;
 
   char response[256];
   snprintf(
@@ -208,6 +255,73 @@ static void stop_execution(MotionExecution *execution, const char *reason) {
     "{\"type\":\"execution\",\"state\":\"stopped\",\"reason\":\"%s\"}",
     reason);
   wb_robot_wwi_send_text(response);
+}
+
+static bool parse_route_command(
+  const char *message,
+  int *action_duration_ms,
+  int *return_duration_ms,
+  MotionRoutePoint *destination,
+  uint8_t *bytes,
+  size_t *byte_length,
+  char *error,
+  size_t error_size) {
+  const char *separators[5] = {0};
+  const char *cursor = message;
+  for (size_t index = 0; index < 5; ++index) {
+    separators[index] = strchr(cursor, '|');
+    if (separators[index] == NULL) {
+      snprintf(error, error_size, "The route command is missing a required field");
+      return false;
+    }
+    cursor = separators[index] + 1;
+  }
+  if (strchr(separators[4] + 1, '|') != NULL) {
+    snprintf(error, error_size, "The route command has too many fields");
+    return false;
+  }
+
+  char fields[4][48] = {{0}};
+  for (size_t index = 0; index < 4; ++index) {
+    const char *start = separators[index] + 1;
+    const char *end = separators[index + 1];
+    const size_t length = (size_t)(end - start);
+    if (length == 0 || length >= sizeof(fields[index])) {
+      snprintf(error, error_size, "A route field is missing or too long");
+      return false;
+    }
+    memcpy(fields[index], start, length);
+    fields[index][length] = '\0';
+  }
+
+  char *end = NULL;
+  const long action = strtol(fields[0], &end, 10);
+  if (end == fields[0] || *end != '\0' || action < MIN_ACTION_DURATION_MS || action > MAX_ACTION_DURATION_MS) {
+    snprintf(error, error_size, "The action duration must be between %d and %d ms", MIN_ACTION_DURATION_MS, MAX_ACTION_DURATION_MS);
+    return false;
+  }
+  const long recovery = strtol(fields[1], &end, 10);
+  if (end == fields[1] || *end != '\0' || recovery < MIN_IDLE_DURATION_MS || recovery > MAX_IDLE_DURATION_MS) {
+    snprintf(error, error_size, "The return duration must be between %d and %d ms", MIN_IDLE_DURATION_MS, MAX_IDLE_DURATION_MS);
+    return false;
+  }
+  const double destination_x = strtod(fields[2], &end);
+  if (end == fields[2] || *end != '\0' || !isfinite(destination_x)) {
+    snprintf(error, error_size, "Destination X must be a finite number");
+    return false;
+  }
+  const double destination_y = strtod(fields[3], &end);
+  if (end == fields[3] || *end != '\0' || !isfinite(destination_y)) {
+    snprintf(error, error_size, "Destination Y must be a finite number");
+    return false;
+  }
+  if (!decode_hex_message(separators[4] + 1, bytes, byte_length, error, error_size))
+    return false;
+
+  *action_duration_ms = (int)action;
+  *return_duration_ms = (int)recovery;
+  *destination = (MotionRoutePoint){.x = destination_x, .y = destination_y};
+  return true;
 }
 
 static bool parse_encode_command(
@@ -289,7 +403,9 @@ static bool parse_encode_command(
 static void handle_robot_window_messages(
   MotionExecution *execution,
   double simulation_time,
-  bool flight_stopped) {
+  bool flight_stopped,
+  MotionRoutePoint current_position,
+  double current_altitude) {
   const char *message = NULL;
   while ((message = wb_robot_wwi_receive_text()) != NULL) {
     if (strcmp(message, "HELLO") == 0) {
@@ -303,8 +419,10 @@ static void handle_robot_window_messages(
       continue;
     }
 
-    const bool is_encode = strncmp(message, "ENCODE|", 7) == 0;
-    const bool is_start = strncmp(message, "START|", 6) == 0;
+    const bool is_route_encode = strncmp(message, "ENCODE_ROUTE|", 13) == 0;
+    const bool is_route_start = strncmp(message, "START_ROUTE|", 12) == 0;
+    const bool is_encode = strncmp(message, "ENCODE|", 7) == 0 || is_route_encode;
+    const bool is_start = strncmp(message, "START|", 6) == 0 || is_route_start;
     if (!is_encode && !is_start) {
       send_error("unknown-command", "Unrecognized Web UI command");
       continue;
@@ -322,24 +440,52 @@ static void handle_robot_window_messages(
     size_t byte_length = 0;
     int action_duration_ms = DEFAULT_ACTION_DURATION_MS;
     int idle_duration_ms = DEFAULT_IDLE_DURATION_MS;
+    MotionRoutePoint destination = {0};
     char error[160];
-    if (!parse_encode_command(
-          message,
-          &action_duration_ms,
-          &idle_duration_ms,
-          bytes,
-          &byte_length,
-          error,
-          sizeof(error)) ||
-        !motion_encode_message(bytes, byte_length, &execution->transmission, error, sizeof(error))) {
+    const bool parsed = is_route_encode || is_route_start ?
+      parse_route_command(
+        message,
+        &action_duration_ms,
+        &idle_duration_ms,
+        &destination,
+        bytes,
+        &byte_length,
+        error,
+        sizeof(error)) :
+      parse_encode_command(
+        message,
+        &action_duration_ms,
+        &idle_duration_ms,
+        bytes,
+        &byte_length,
+        error,
+        sizeof(error));
+    if (!parsed || !motion_encode_message(bytes, byte_length, &execution->transmission, error, sizeof(error))) {
       execution->has_encoding = false;
       send_error("invalid-input", error);
       continue;
     }
 
+    MotionRoutePlan route = {0};
+    if (is_route_encode || is_route_start) {
+      const double duration_seconds =
+        execution->transmission.frame_count * MOTION_FRAME_ACTION_COUNT * (action_duration_ms + idle_duration_ms) / 1000.0;
+      const char *route_error = NULL;
+      if (!motion_route_plan(current_position, destination, duration_seconds, &route, &route_error)) {
+        execution->has_encoding = false;
+        send_error("invalid-route", route_error == NULL ? "Invalid route" : route_error);
+        continue;
+      }
+    }
+
     execution->has_encoding = true;
     execution->action_duration_ms = action_duration_ms;
     execution->idle_duration_ms = idle_duration_ms;
+    execution->route_enabled = is_route_encode || is_route_start;
+    if (execution->route_enabled) {
+      execution->route = route;
+      execution->route_altitude = current_altitude;
+    }
     send_encoding(execution);
 
     if (is_start) {
@@ -348,7 +494,12 @@ static void handle_robot_window_messages(
       execution->last_status_at = -1.0;
       execution->last_reported_slot = (size_t)-1;
       execution->last_reported_action_phase = false;
-      wb_robot_wwi_send_text("{\"type\":\"execution\",\"state\":\"running\"}");
+      execution->route_state = execution->route_enabled ? ROUTE_STATE_ALIGNING : ROUTE_STATE_NONE;
+      execution->route_state_started_at = simulation_time;
+      execution->route_stable_since = -1.0;
+      wb_robot_wwi_send_text(execution->route_enabled ?
+        "{\"type\":\"execution\",\"state\":\"aligning\"}" :
+        "{\"type\":\"execution\",\"state\":\"running\"}");
     }
   }
 }
@@ -361,6 +512,8 @@ static MotionAction current_automatic_action(
     *action_phase_output = false;
   if (!execution->running)
     return MOTION_ACTION_HOVER;
+  if (execution->route_enabled && execution->route_state != ROUTE_STATE_TRANSMITTING)
+    return MOTION_ACTION_HOVER;
 
   const double action_duration_seconds = execution->action_duration_ms / 1000.0;
   const double idle_duration_seconds = execution->idle_duration_ms / 1000.0;
@@ -369,6 +522,12 @@ static MotionAction current_automatic_action(
   const size_t total_slots = execution->transmission.frame_count * MOTION_FRAME_ACTION_COUNT;
   const size_t global_slot = elapsed <= 0.0 ? 0 : (size_t)(elapsed / cycle_duration_seconds);
   if (global_slot >= total_slots) {
+    if (execution->route_enabled) {
+      execution->route_state = ROUTE_STATE_SETTLING;
+      execution->route_state_started_at = simulation_time;
+      execution->route_stable_since = -1.0;
+      return MOTION_ACTION_HOVER;
+    }
     execution->running = false;
     wb_robot_wwi_send_text("{\"type\":\"execution\",\"state\":\"complete\"}");
     return MOTION_ACTION_HOVER;
@@ -381,6 +540,9 @@ static MotionAction current_automatic_action(
   const bool action_phase = cycle_elapsed < action_duration_seconds;
   if (action_phase_output != NULL)
     *action_phase_output = action_phase;
+
+  if (execution->route_enabled)
+    return encoded_action;
 
   if (execution->last_status_at < 0.0 || simulation_time - execution->last_status_at >= 0.1 ||
       execution->last_reported_slot != global_slot || execution->last_reported_action_phase != action_phase) {
@@ -417,6 +579,140 @@ static MotionAction current_automatic_action(
   }
 
   return encoded_action;
+}
+
+static void update_route_state(
+  MotionExecution *execution,
+  double simulation_time,
+  MotionRoutePoint actual_position,
+  double yaw,
+  double yaw_rate,
+  double horizontal_speed) {
+  if (!execution->running || !execution->route_enabled)
+    return;
+
+  if (execution->route_state == ROUTE_STATE_ALIGNING) {
+    const bool aligned = fabs(wrap_angle(execution->route.heading_radians - yaw)) <= ROUTE_HEADING_TOLERANCE_RAD &&
+      fabs(yaw_rate) <= ROUTE_YAW_RATE_TOLERANCE_RAD_PER_SEC;
+    if (aligned) {
+      if (execution->route_stable_since < 0.0)
+        execution->route_stable_since = simulation_time;
+      if (simulation_time - execution->route_stable_since >= ROUTE_STABLE_SECONDS) {
+        execution->route_state = ROUTE_STATE_TRANSMITTING;
+        execution->route_state_started_at = simulation_time;
+        execution->started_at = simulation_time;
+        execution->last_reported_slot = (size_t)-1;
+        execution->last_reported_action_phase = false;
+        wb_robot_wwi_send_text("{\"type\":\"execution\",\"state\":\"running\"}");
+      }
+    } else {
+      execution->route_stable_since = -1.0;
+    }
+    if (simulation_time - execution->route_state_started_at > ROUTE_ALIGN_TIMEOUT_SECONDS) {
+      execution->running = false;
+      execution->route_state = ROUTE_STATE_NONE;
+      send_error("align-timeout", "The drone did not align with the A-to-B route within 15 seconds");
+      wb_robot_wwi_send_text("{\"type\":\"execution\",\"state\":\"error\",\"reason\":\"align-timeout\"}");
+    }
+    return;
+  }
+
+  if (execution->route_state == ROUTE_STATE_SETTLING) {
+    const double distance_to_destination = hypot(
+      actual_position.x - execution->route.destination.x,
+      actual_position.y - execution->route.destination.y);
+    const bool settled = distance_to_destination <= ROUTE_ARRIVAL_DISTANCE_METERS &&
+      horizontal_speed <= ROUTE_ARRIVAL_SPEED_METERS_PER_SEC;
+    if (settled) {
+      if (execution->route_stable_since < 0.0)
+        execution->route_stable_since = simulation_time;
+      if (simulation_time - execution->route_stable_since >= ROUTE_STABLE_SECONDS) {
+        execution->running = false;
+        execution->route_state = ROUTE_STATE_NONE;
+        wb_robot_wwi_send_text("{\"type\":\"execution\",\"state\":\"complete\"}");
+      }
+    } else {
+      execution->route_stable_since = -1.0;
+    }
+    if (execution->running && simulation_time - execution->route_state_started_at > ROUTE_SETTLE_TIMEOUT_SECONDS) {
+      execution->running = false;
+      execution->route_state = ROUTE_STATE_NONE;
+      send_error("arrival-timeout", "The drone did not settle at B within 10 seconds");
+      wb_robot_wwi_send_text("{\"type\":\"execution\",\"state\":\"error\",\"reason\":\"arrival-timeout\"}");
+    }
+  }
+}
+
+static void send_route_status(
+  MotionExecution *execution,
+  double simulation_time,
+  MotionRoutePoint actual_position,
+  double yaw) {
+  if (!execution->running || !execution->route_enabled ||
+      (execution->last_status_at >= 0.0 && simulation_time - execution->last_status_at < 0.1)) {
+    return;
+  }
+
+  const double route_elapsed = execution->route_state == ROUTE_STATE_TRANSMITTING ?
+    simulation_time - execution->started_at :
+    (execution->route_state == ROUTE_STATE_SETTLING ? execution->route.duration_seconds : 0.0);
+  const MotionRouteSample sample = motion_route_sample(&execution->route, route_elapsed);
+  double along = 0.0;
+  double cross = 0.0;
+  motion_route_errors(&execution->route, actual_position, &along, &cross);
+  const int cycle_duration_ms = execution->action_duration_ms + execution->idle_duration_ms;
+  const size_t total_slots = execution->transmission.frame_count * MOTION_FRAME_ACTION_COUNT;
+  size_t global_slot = 0;
+  bool action_phase = false;
+  MotionAction encoded_action = MOTION_ACTION_HOVER;
+  const char *phase = execution->route_state == ROUTE_STATE_ALIGNING ? "align" :
+    (execution->route_state == ROUTE_STATE_SETTLING ? "settle" : "return");
+  if (execution->route_state == ROUTE_STATE_TRANSMITTING) {
+    global_slot = (size_t)fmin((double)(total_slots - 1), fmax(0.0, route_elapsed * 1000.0 / cycle_duration_ms));
+    const int within_cycle_ms = (int)fmod(fmax(0.0, route_elapsed * 1000.0), cycle_duration_ms);
+    action_phase = within_cycle_ms < execution->action_duration_ms;
+    phase = action_phase ? "action" : "return";
+    encoded_action = execution->transmission.frames[global_slot / MOTION_FRAME_ACTION_COUNT]
+      .actions[global_slot % MOTION_FRAME_ACTION_COUNT];
+  }
+  const double heading_error_deg = wrap_angle(execution->route.heading_radians - yaw) * 180.0 / 3.14159265358979323846;
+  char response[1024];
+  snprintf(
+    response,
+    sizeof(response),
+    "{\"type\":\"status\",\"state\":\"%s\",\"physicalProfileVersion\":5,"
+    "\"frameIndex\":%zu,\"frameCount\":%zu,\"slotIndex\":%zu,\"globalSlot\":%zu,\"totalSlots\":%zu,"
+    "\"phase\":\"%s\",\"encodedAction\":\"%c\",\"action\":\"%c\",\"actionName\":\"%s\","
+    "\"slotProgress\":%.4f,\"phaseProgress\":0.0,\"elapsedSeconds\":%.3f,\"totalSeconds\":%.3f,"
+    "\"nominalX\":%.3f,\"nominalY\":%.3f,\"actualX\":%.3f,\"actualY\":%.3f,"
+    "\"routeProgress\":%.4f,\"alongTrackMeters\":%.3f,\"crossTrackMeters\":%.3f,"
+    "\"headingErrorDeg\":%.2f,\"nominalSpeedMetersPerSec\":%.4f}",
+    execution->route_state == ROUTE_STATE_ALIGNING ? "aligning" :
+      (execution->route_state == ROUTE_STATE_SETTLING ? "settling" : "running"),
+    global_slot / MOTION_FRAME_ACTION_COUNT,
+    execution->transmission.frame_count,
+    global_slot % MOTION_FRAME_ACTION_COUNT,
+    global_slot,
+    total_slots,
+    phase,
+    motion_action_code(encoded_action),
+    action_phase ? motion_action_code(encoded_action) : '-',
+    action_phase ? motion_action_name(encoded_action) :
+      (execution->route_state == ROUTE_STATE_TRANSMITTING ? "Return to moving centerline" : "Route position hold"),
+    total_slots == 0 ? 0.0 : (global_slot + (action_phase ? 0.25 : 0.75)) / total_slots,
+    route_elapsed,
+    execution->route.duration_seconds,
+    sample.nominal_position.x,
+    sample.nominal_position.y,
+    actual_position.x,
+    actual_position.y,
+    sample.progress,
+    along,
+    cross,
+    heading_error_deg,
+    execution->route.nominal_speed_meters_per_sec);
+  wb_robot_wwi_send_text(response);
+  execution->last_status_at = simulation_time;
 }
 
 int main(int argc, char **argv) {
@@ -496,6 +792,7 @@ int main(int argc, char **argv) {
   const double k_position_p = 0.08;  // Return decisively to the point where the movement key was released.
   const double k_position_d = 0.18;  // Stronger horizontal braking for a distinct stop/reverse response.
   const double k_max_hold_tilt = 2.0 * 3.14159265358979323846 / 180.0;
+  const double k_max_route_hold_tilt = 8.0 * 3.14159265358979323846 / 180.0;
   const double vertical_speed_filter_time = 0.15;
   const double horizontal_speed_filter_time = 0.20;
 
@@ -647,9 +944,36 @@ int main(int argc, char **argv) {
 
     // The Webots robot window sends UTF-8 bytes as hexadecimal text. The C controller owns
     // authoritative BCH encoding and execution so the preview and the physical actions agree.
-    handle_robot_window_messages(&execution, time, stopped);
+    const MotionRoutePoint actual_position = {.x = position_x, .y = position_y};
+    handle_robot_window_messages(&execution, time, stopped, actual_position, altitude);
+    update_route_state(
+      &execution,
+      time,
+      actual_position,
+      yaw,
+      yaw_velocity,
+      hypot(filtered_velocity_x, filtered_velocity_y));
+
+    double route_velocity_x = 0.0;
+    double route_velocity_y = 0.0;
+    const bool route_tracking = execution.running && execution.route_enabled;
+    if (route_tracking) {
+      const double route_elapsed = execution.route_state == ROUTE_STATE_TRANSMITTING ? time - execution.started_at :
+        (execution.route_state == ROUTE_STATE_SETTLING ? execution.route.duration_seconds : 0.0);
+      const MotionRouteSample route_sample = motion_route_sample(&execution.route, route_elapsed);
+      target_x = route_sample.nominal_position.x;
+      target_y = route_sample.nominal_position.y;
+      target_yaw = execution.route.heading_radians;
+      if (execution.route_state == ROUTE_STATE_ALIGNING)
+        target_altitude = execution.route_altitude;
+      route_velocity_x = route_sample.nominal_velocity.x;
+      route_velocity_y = route_sample.nominal_velocity.y;
+    }
     bool automatic_action_phase = false;
     MotionAction automatic_action = current_automatic_action(&execution, time, &automatic_action_phase);
+    send_route_status(&execution, time, actual_position, yaw);
+    double automatic_roll_disturbance = 0.0;
+    double automatic_pitch_disturbance = 0.0;
 
     // Automatic protocol actions have exclusive control of horizontal motion. Altitude
     // controls and the P-key emergency stop remain available throughout a transmission.
@@ -661,15 +985,25 @@ int main(int argc, char **argv) {
       e_is_pressed = false;
       if (automatic_action_phase) {
         // Match the existing keyboard driver: F = Up, H = Down, L = Q and R = E.
-        // During the idle phase all movement targets stay at zero.
-        if (automatic_action == MOTION_ACTION_FORWARD)
+        // Route actions are disturbances around a moving position target; legacy actions keep their old hold behavior.
+        if (execution.route_enabled) {
+          if (automatic_action == MOTION_ACTION_FORWARD)
+            automatic_pitch_disturbance = k_move_tilt_angle;
+          else if (automatic_action == MOTION_ACTION_HOVER)
+            automatic_pitch_disturbance = -k_move_tilt_angle;
+          else if (automatic_action == MOTION_ACTION_MOVE_LEFT)
+            automatic_roll_disturbance = -k_qe_tilt_angle;
+          else if (automatic_action == MOTION_ACTION_MOVE_RIGHT)
+            automatic_roll_disturbance = k_qe_tilt_angle;
+        } else if (automatic_action == MOTION_ACTION_FORWARD) {
           manual_pitch_target = k_move_tilt_angle;
-        else if (automatic_action == MOTION_ACTION_HOVER)
+        } else if (automatic_action == MOTION_ACTION_HOVER) {
           manual_pitch_target = -k_move_tilt_angle;
-        else if (automatic_action == MOTION_ACTION_MOVE_LEFT)
+        } else if (automatic_action == MOTION_ACTION_MOVE_LEFT) {
           manual_roll_target = -k_qe_tilt_angle;
-        else if (automatic_action == MOTION_ACTION_MOVE_RIGHT)
+        } else if (automatic_action == MOTION_ACTION_MOVE_RIGHT) {
           manual_roll_target = k_qe_tilt_angle;
+        }
       }
     }
 
@@ -717,17 +1051,23 @@ int main(int argc, char **argv) {
     double target_pitch = manual_pitch_target;
     if (!manual_translation) {
       const double position_command_x =
-        k_position_p * (target_x - position_x) - k_position_d * filtered_velocity_x;
+        k_position_p * (target_x - position_x) + k_position_d * (route_velocity_x - filtered_velocity_x);
       const double position_command_y =
-        k_position_p * (target_y - position_y) - k_position_d * filtered_velocity_y;
+        k_position_p * (target_y - position_y) + k_position_d * (route_velocity_y - filtered_velocity_y);
 
       // Convert world-coordinate GPS corrections into the drone's forward/left axes.
       const double cos_yaw = cos(yaw);
       const double sin_yaw = sin(yaw);
       const double forward_command = cos_yaw * position_command_x + sin_yaw * position_command_y;
       const double left_command = -sin_yaw * position_command_x + cos_yaw * position_command_y;
-      target_pitch = CLAMP(forward_command, -k_max_hold_tilt, k_max_hold_tilt);
-      target_roll = CLAMP(-left_command, -k_max_hold_tilt, k_max_hold_tilt);
+      const double hold_limit = route_tracking ? k_max_route_hold_tilt : k_max_hold_tilt;
+      target_pitch = CLAMP(forward_command, -hold_limit, hold_limit);
+      target_roll = CLAMP(-left_command, -hold_limit, hold_limit);
+    }
+
+    if (route_tracking) {
+      target_roll = CLAMP(target_roll + automatic_roll_disturbance, -k_qe_tilt_angle, k_qe_tilt_angle);
+      target_pitch = CLAMP(target_pitch + automatic_pitch_disturbance, -k_qe_tilt_angle, k_qe_tilt_angle);
     }
 
     // Q/E override automatic roll holding while pressed. Pressing both cancels the tilt.

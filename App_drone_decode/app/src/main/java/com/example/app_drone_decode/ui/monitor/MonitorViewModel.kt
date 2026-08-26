@@ -632,6 +632,17 @@ class MonitorViewModel(
         }
     }
 
+    fun restoreLegacyStationaryHoldProfile() {
+        if (mutableState.value.isDecoding) {
+            mutableState.update { it.copy(configMessage = "Pause decoding before restoring a legacy profile.") }
+            return
+        }
+        viewModelScope.launch {
+            container.profileRepository.restoreLegacyStationaryHold()
+            mutableState.update { it.copy(configMessage = "Legacy stationary-hold v4 profile restored.") }
+        }
+    }
+
     fun saveFunctionSettings(settings: FunctionSettings) {
         viewModelScope.launch {
             runCatching { container.functionSettingsRepository.save(settings) }
@@ -849,11 +860,11 @@ class MonitorViewModel(
     private fun timingWarning(fps: Float, profile: DecoderProfile): String? {
         if (fps <= 0f) return null
         val actionFrames = fps * profile.actionDurationMs / 1_000f
-        val idleFrames = fps * profile.idleDurationMs / 1_000f
+        val idleFrames = fps * profile.secondaryPhaseDurationMs / 1_000f
         return when {
             actionFrames < 5f -> "Only ${"%.1f".format(actionFrames)} frames are expected in each action window."
-            profile.idleDurationMs > 0 && idleFrames < 3f ->
-                "Only ${"%.1f".format(idleFrames)} frames are expected in each idle reference window."
+            profile.secondaryPhaseDurationMs > 0 && idleFrames < 3f ->
+                "Only ${"%.1f".format(idleFrames)} frames are expected in each return/reference window."
             else -> null
         }
     }

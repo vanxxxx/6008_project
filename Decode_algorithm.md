@@ -76,12 +76,13 @@ The mapping assigns Hamming distance 2 to opposite action pairs (`F/H` and
 misclassification contributes one BCH bit error instead of two.
 
 The letters and bit mapping define wire protocol version 3. In physical profile
-version 4, `H` no longer means hover and `L/R` no longer mean yaw. The
-idle interval is not a fifth symbol and carries no bits.
+version 5, `H` no longer means hover and `L/R` no longer mean yaw. The return
+interval is not a fifth symbol and carries no bits. Physical profile v4 remains
+the legacy stationary-hold profile and must not be silently reinterpreted.
 
 ### Important rule for backward motion and idle
 
-Loss of tracking or an idle interval must **never** be interpreted as `H`.
+Loss of tracking or a return interval must **never** be interpreted as `H`.
 
 The receiver must distinguish:
 
@@ -103,10 +104,12 @@ All symbols are transmitted in fixed-duration cycles of length `T`:
 T = action_duration A + idle_duration I
 ```
 
-The physical profile version 4 default is `A = 500 ms` and `I = 500 ms`.
-The action is applied only during the first phase; the transmitter then holds
-position during the idle phase. The receiver preserves one symbol position per
-complete action-plus-idle cycle and uses the idle phase as a local motion baseline.
+The physical profile version 5 default is `A = 500 ms` and `I = 500 ms`.
+The transmitter travels on a nominal horizontal A→B centerline throughout both
+phases. The action is applied only during the first phase; the second phase
+removes that disturbance and returns to the centerline at its current advancing
+position. The receiver preserves one symbol position per complete action-plus-
+return cycle and compares the two phases to cancel the common centerline motion.
 
 Example:
 
@@ -1129,12 +1132,20 @@ FRAME
 CAPACITY
 0..5 payload bytes per frame
 
-DURATION (PHYSICAL PROFILE V4 DEFAULT)
+DURATION (PHYSICAL PROFILE V5 DEFAULT)
 A = 0.5 s active motion
-I = 0.5 s no-action reference
+I = 0.5 s return to the advancing A→B centerline
 T = A + I = 1.0 s per symbol
 40 * T = 40 seconds per frame
 ```
+
+Physical profile v4 remains a legacy stationary-hold interpretation of the
+same `A`/`I` timing.  It is selected explicitly by an existing v4 profile and
+is never inferred from a v5 recording or configuration.
+
+The v5 planner derives nominal speed from the chosen A, B, and complete message
+duration.  It does not impose a separate nominal-speed cap: reaching B at the
+end of the message is the primary route requirement.
 
 ---
 

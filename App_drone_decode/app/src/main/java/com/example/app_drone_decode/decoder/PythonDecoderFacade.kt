@@ -170,6 +170,8 @@ class PythonDecoderFacade(private val appContext: Context) {
         .put("profileVersion", profileVersion)
         .put("protocolVersion", protocolVersion)
         .put("actionDurationMs", actionDurationMs)
+        .put("recoveryDurationMs", recoveryDurationMs)
+        .put("motionReferenceMode", motionReferenceMode.name)
         .put("idleDurationMs", idleDurationMs)
         .put("symbolDurationMs", symbolDurationMs)
         .put("stableWindowFraction", stableWindowFraction)

@@ -11,6 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.example.app_drone_decode.domain.model.ActionClass
 import com.example.app_drone_decode.domain.model.DecoderProfile
 import com.example.app_drone_decode.domain.model.DecoderProfileValidator
+import com.example.app_drone_decode.domain.model.MotionReferenceMode
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -39,6 +40,8 @@ class DecoderProfileRepository(private val context: Context) {
             preferences[Keys.mappingR] = profile.actionMapping.getValue(ActionClass.YAW_RIGHT)
             preferences[Keys.sync] = profile.syncActions.joinToString("") { it.shortName }
             preferences[Keys.actionDurationMs] = profile.actionDurationMs
+            preferences[Keys.recoveryDurationMs] = profile.recoveryDurationMs
+            preferences[Keys.motionReferenceMode] = profile.motionReferenceMode.name
             preferences[Keys.idleDurationMs] = profile.idleDurationMs
             preferences[Keys.stableWindowFraction] = profile.stableWindowFraction
             preferences[Keys.minimumSamplesPerSlot] = profile.minimumSamplesPerSlot
@@ -72,6 +75,8 @@ class DecoderProfileRepository(private val context: Context) {
 
     suspend fun restoreDefaults() = save(DecoderProfile())
 
+    suspend fun restoreLegacyStationaryHold() = save(DecoderProfile.legacyStationaryHoldProfile())
+
     private fun profileFromPreferences(preferences: Preferences): DecoderProfile {
         val defaults = DecoderProfile()
         val storedProfileId = preferences[Keys.profileId]
@@ -82,9 +87,14 @@ class DecoderProfileRepository(private val context: Context) {
         // profiles are migrated; custom profiles retain their declared version
         // and mapping so imported or saved observations are never reinterpreted.
         val migrateBuiltInProfile = storedProfileId == null ||
-            storedProfileId in LEGACY_BUILT_IN_PROFILE_IDS ||
-            (storedProfileId == defaults.profileId &&
-                (storedProfileVersion ?: 0) < defaults.profileVersion)
+            storedProfileId in LEGACY_BUILT_IN_PROFILE_IDS
+        val inferredReferenceMode = preferences[Keys.motionReferenceMode]
+            ?.let { value -> MotionReferenceMode.entries.firstOrNull { it.name == value } }
+            ?: if (storedProfileId == "protocol-v3-default" && (storedProfileVersion ?: 0) <= 4) {
+                MotionReferenceMode.STATIONARY_HOLD
+            } else {
+                defaults.motionReferenceMode
+            }
         val sync = preferences[Keys.sync]
             ?.map { ActionClass.fromShortName(it.toString()) }
             ?.takeIf { it.size == 8 && ActionClass.UNKNOWN !in it }
@@ -111,6 +121,14 @@ class DecoderProfileRepository(private val context: Context) {
                     ?: preferences[Keys.legacySlotDurationMs]
                     ?: defaults.actionDurationMs
             },
+            recoveryDurationMs = if (migrateBuiltInProfile) {
+                defaults.recoveryDurationMs
+            } else {
+                preferences[Keys.recoveryDurationMs]
+                    ?: preferences[Keys.idleDurationMs]
+                    ?: defaults.recoveryDurationMs
+            },
+            motionReferenceMode = if (migrateBuiltInProfile) defaults.motionReferenceMode else inferredReferenceMode,
             idleDurationMs = if (migrateBuiltInProfile) {
                 defaults.idleDurationMs
             } else {
@@ -165,6 +183,8 @@ class DecoderProfileRepository(private val context: Context) {
         val mappingR = stringPreferencesKey("mapping_r")
         val sync = stringPreferencesKey("sync")
         val actionDurationMs = intPreferencesKey("action_duration_ms")
+        val recoveryDurationMs = intPreferencesKey("recovery_duration_ms")
+        val motionReferenceMode = stringPreferencesKey("motion_reference_mode")
         val idleDurationMs = intPreferencesKey("idle_duration_ms")
         val legacySlotDurationMs = intPreferencesKey("slot_duration_ms")
         val stableWindowFraction = floatPreferencesKey("stable_window_fraction")

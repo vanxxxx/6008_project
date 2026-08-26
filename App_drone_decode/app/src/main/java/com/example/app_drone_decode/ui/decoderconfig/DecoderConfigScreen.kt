@@ -102,12 +102,17 @@ fun DecoderConfigScreen(state: MonitorUiState, viewModel: MonitorViewModel) {
             }
         }
         item {
-            SectionSurface("Action and idle timing") {
+            SectionSurface("Action and secondary-phase timing") {
                 NumberField("Action duration (ms)", editor.actionDurationMs) {
                     editor = editor.copy(actionDurationMs = it)
                 }
-                NumberField("Idle duration (ms)", editor.idleDurationMs) {
-                    editor = editor.copy(idleDurationMs = it)
+                val secondaryLabel = if (state.profile.motionReferenceMode.name == "MOVING_CENTERLINE_RETURN") {
+                    "Return to centerline (ms)"
+                } else {
+                    "Idle duration (ms)"
+                }
+                NumberField(secondaryLabel, editor.secondaryDurationMs) {
+                    editor = editor.copy(secondaryDurationMs = it)
                 }
                 NumberField("Stable window (0.2–0.9)", editor.stableWindowFraction, decimal = true) {
                     editor = editor.copy(stableWindowFraction = it)
@@ -116,11 +121,11 @@ fun DecoderConfigScreen(state: MonitorUiState, viewModel: MonitorViewModel) {
                     editor = editor.copy(minimumSamplesPerSlot = it)
                 }
                 val actionMs = editor.actionDurationMs.toFloatOrNull() ?: 0f
-                val idleMs = editor.idleDurationMs.toFloatOrNull() ?: 0f
+                val idleMs = editor.secondaryDurationMs.toFloatOrNull() ?: 0f
                 val framesPerAction = state.functionSettings.requestedFps * actionMs / 1_000f
                 val framesPerIdle = state.functionSettings.requestedFps * idleMs / 1_000f
                 MetricRow("Frames in action window", "%.1f".format(framesPerAction))
-                MetricRow("Frames in idle window", "%.1f".format(framesPerIdle))
+                MetricRow("Frames in secondary window", "%.1f".format(framesPerIdle))
                 MetricRow("Symbol cycle", "%.0f ms".format(actionMs + idleMs))
                 if (framesPerAction in 0f..4.99f || (idleMs > 0f && framesPerIdle < 5f)) {
                     Text("The selected camera rate provides too few frames in one timing window.", color = WarningAmber)
@@ -196,6 +201,10 @@ fun DecoderConfigScreen(state: MonitorUiState, viewModel: MonitorViewModel) {
                         modifier = Modifier.weight(1f),
                     ) { Text("Restore defaults") }
                 }
+                OutlinedButton(
+                    onClick = viewModel::restoreLegacyStationaryHoldProfile,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Restore legacy v4 stationary hold") }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = {
@@ -260,7 +269,7 @@ private data class ProfileEditor(
     val mappingR: String,
     val sync: String,
     val actionDurationMs: String,
-    val idleDurationMs: String,
+    val secondaryDurationMs: String,
     val stableWindowFraction: String,
     val minimumSamplesPerSlot: String,
     val highConfidence: String,
@@ -294,7 +303,16 @@ private data class ProfileEditor(
         ),
         syncActions = sync.map { ActionClass.fromShortName(it.toString()) },
         actionDurationMs = actionDurationMs.toIntOrNull() ?: 0,
-        idleDurationMs = idleDurationMs.toIntOrNull() ?: -1,
+        recoveryDurationMs = if (base.motionReferenceMode.name == "MOVING_CENTERLINE_RETURN") {
+            secondaryDurationMs.toIntOrNull() ?: -1
+        } else {
+            base.recoveryDurationMs
+        },
+        idleDurationMs = if (base.motionReferenceMode.name == "STATIONARY_HOLD") {
+            secondaryDurationMs.toIntOrNull() ?: -1
+        } else {
+            base.idleDurationMs
+        },
         stableWindowFraction = stableWindowFraction.toFloatOrNull() ?: 0f,
         minimumSamplesPerSlot = minimumSamplesPerSlot.toIntOrNull() ?: 0,
         highConfidenceThreshold = highConfidence.toFloatOrNull() ?: -1f,
@@ -332,7 +350,7 @@ private data class ProfileEditor(
             mappingR = profile.actionMapping.getValue(ActionClass.YAW_RIGHT),
             sync = profile.syncActions.joinToString("") { it.shortName },
             actionDurationMs = profile.actionDurationMs.toString(),
-            idleDurationMs = profile.idleDurationMs.toString(),
+            secondaryDurationMs = profile.secondaryPhaseDurationMs.toString(),
             stableWindowFraction = profile.stableWindowFraction.toString(),
             minimumSamplesPerSlot = profile.minimumSamplesPerSlot.toString(),
             highConfidence = profile.highConfidenceThreshold.toString(),

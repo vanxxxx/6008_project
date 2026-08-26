@@ -6,6 +6,9 @@ const elements = {
   byteCounter: document.getElementById('byte-counter'),
   actionDuration: document.getElementById('action-duration'),
   idleDuration: document.getElementById('idle-duration'),
+  destinationX: document.getElementById('destination-x'),
+  destinationY: document.getElementById('destination-y'),
+  routePreview: document.getElementById('route-preview'),
   resetTiming: document.getElementById('reset-timing-button'),
   start: document.getElementById('start-button'),
   stop: document.getElementById('stop-button'),
@@ -19,6 +22,8 @@ const elements = {
   metricFrames: document.getElementById('metric-frames'),
   metricActions: document.getElementById('metric-actions'),
   metricDuration: document.getElementById('metric-duration'),
+  metricRouteSpeed: document.getElementById('metric-route-speed'),
+  metricCrossTrack: document.getElementById('metric-cross-track'),
   emptyState: document.getElementById('empty-state'),
   frameList: document.getElementById('frame-list'),
 };
@@ -26,6 +31,7 @@ const elements = {
 const state = {
   connected: false,
   controllerSupportsIdle: true,
+  supportsRoute: false,
   running: false,
   maxBytes: 240,
   defaultActionMs: 500,
@@ -66,6 +72,8 @@ function validateInput() {
   const bytes = utf8Bytes();
   const actionMs = Number(elements.actionDuration.value);
   const idleMs = Number(elements.idleDuration.value);
+  const destinationX = Number(elements.destinationX.value);
+  const destinationY = Number(elements.destinationY.value);
   const overLimit = bytes.length > state.maxBytes;
   elements.byteCounter.textContent = `${bytes.length} / ${state.maxBytes} bytes`;
   elements.byteCounter.dataset.overLimit = String(overLimit);
@@ -81,10 +89,14 @@ function validateInput() {
     error = `The action duration must be between ${state.minActionMs} and ${state.maxActionMs} ms.`;
   else if (!Number.isInteger(idleMs) || idleMs < state.minIdleMs || idleMs > state.maxIdleMs)
     error = `The idle duration must be between ${state.minIdleMs} and ${state.maxIdleMs} ms.`;
+  else if (state.connected && !state.supportsRoute)
+    error = 'Restart the Webots simulation to load the A-to-B centerline controller.';
+  else if (!Number.isFinite(destinationX) || !Number.isFinite(destinationY))
+    error = 'Destination X and Y must be finite numbers.';
 
   showError(error);
   elements.start.disabled = Boolean(error) || !state.connected || state.running;
-  return error ? null : {bytes, actionMs, idleMs};
+  return error ? null : {bytes, actionMs, idleMs, destinationX, destinationY};
 }
 
 function requestEncoding(command = 'ENCODE') {
@@ -96,7 +108,8 @@ function requestEncoding(command = 'ENCODE') {
       clearEncoding();
     return;
   }
-  robotWindow.send(`${command}|${input.actionMs}|${input.idleMs}|${bytesToHex(input.bytes)}`);
+  const routeCommand = command === 'START' ? 'START_ROUTE' : 'ENCODE_ROUTE';
+  robotWindow.send(`${routeCommand}|${input.actionMs}|${input.idleMs}|${input.destinationX}|${input.destinationY}|${bytesToHex(input.bytes)}`);
   if (command === 'START')
     elements.start.disabled = true;
 }
@@ -116,6 +129,9 @@ function clearEncoding() {
   elements.metricFrames.textContent = '—';
   elements.metricActions.textContent = '—';
   elements.metricDuration.textContent = '—';
+  elements.metricRouteSpeed.textContent = '—';
+  elements.metricCrossTrack.textContent = '—';
+  elements.routePreview.textContent = 'A is captured when the sequence starts.';
 }
 
 function createCodeRow(label, bitCount, value) {
@@ -195,6 +211,11 @@ function renderSummary() {
   elements.metricFrames.textContent = state.summary.frameCount;
   elements.metricActions.textContent = state.summary.totalActions;
   elements.metricDuration.textContent = `${state.summary.durationSeconds.toFixed(1)} s`;
+  elements.metricRouteSpeed.textContent = Number.isFinite(state.summary.nominalSpeedMetersPerSec)
+    ? `${state.summary.nominalSpeedMetersPerSec.toFixed(3)} m/s` : '—';
+  if (Number.isFinite(state.summary.routeStartX)) {
+    elements.routePreview.textContent = `A (${state.summary.routeStartX.toFixed(2)}, ${state.summary.routeStartY.toFixed(2)}) → B (${state.summary.destinationX.toFixed(2)}, ${state.summary.destinationY.toFixed(2)}) · ${state.summary.routeDistanceMeters.toFixed(2)} m`;
+  }
   elements.timeStatus.textContent = `0.0 / ${state.summary.durationSeconds.toFixed(1)} s`;
 }
 
@@ -203,6 +224,8 @@ function setRunning(running) {
   elements.message.disabled = running;
   elements.actionDuration.disabled = running;
   elements.idleDuration.disabled = running;
+  elements.destinationX.disabled = running;
+  elements.destinationY.disabled = running;
   elements.resetTiming.disabled = running;
   elements.stop.disabled = !running;
   elements.start.disabled = running || !validateInput();
@@ -216,13 +239,18 @@ function resetActiveAction() {
 function updateStatus(message) {
   const completedSlots = message.globalSlot + message.slotProgress;
   const progress = message.totalSlots > 0 ? completedSlots / message.totalSlots : 0;
-  const phaseLabel = message.phase === 'idle' ? 'Idle / hold' : 'Action';
+  const phaseLabel = message.phase === 'return' ? 'Return to centerline' :
+    (message.phase === 'align' ? 'Aligning to route' : message.phase === 'settle' ? 'Settling at B' : 'Action');
   elements.executionTitle.textContent = `Frame ${message.frameIndex + 1} · Slot ${message.slotIndex + 1} · ${phaseLabel}`;
   elements.currentAction.dataset.action = message.action;
   elements.currentAction.textContent = `${message.action} · ${message.actionName}`;
   elements.overallProgress.style.width = `${Math.min(100, Math.max(0, progress * 100))}%`;
   elements.slotStatus.textContent = `Action ${message.globalSlot + 1} / ${message.totalSlots} · ${phaseLabel}`;
   elements.timeStatus.textContent = `${message.elapsedSeconds.toFixed(1)} / ${message.totalSeconds.toFixed(1)} s`;
+  if (Number.isFinite(message.crossTrackMeters))
+    elements.metricCrossTrack.textContent = `${message.crossTrackMeters.toFixed(2)} m`;
+  if (Number.isFinite(message.nominalSpeedMetersPerSec))
+    elements.metricRouteSpeed.textContent = `${message.nominalSpeedMetersPerSec.toFixed(3)} m/s`;
 
   resetActiveAction();
   const frameCard = elements.frameList.querySelector(`[data-frame-index="${message.frameIndex}"]`);
@@ -262,6 +290,7 @@ function receive(rawMessage) {
     case 'ready':
       state.connected = true;
       state.controllerSupportsIdle = Number.isFinite(message.defaultIdleMs);
+      state.supportsRoute = message.supportsRoute === true;
       state.maxBytes = message.maxBytes;
       state.defaultActionMs = message.defaultActionMs ?? message.defaultSlotMs ?? 500;
       state.minActionMs = message.minActionMs ?? message.minSlotMs ?? 100;
@@ -304,7 +333,9 @@ function receive(rawMessage) {
         setRunning(false);
       else
         validateInput();
-      showError(message.message);
+      showError(message.message === 'The route requires more than the 0.30 m/s nominal speed limit'
+        ? 'The running controller is an older build with the removed 0.30 m/s limit. Stop and restart the Webots simulation after rebuilding mavic2pro.'
+        : message.message);
       break;
     default:
       break;
@@ -316,6 +347,8 @@ robotWindow.receive = receive;
 elements.message.addEventListener('input', scheduleEncoding);
 elements.actionDuration.addEventListener('input', scheduleEncoding);
 elements.idleDuration.addEventListener('input', scheduleEncoding);
+elements.destinationX.addEventListener('input', scheduleEncoding);
+elements.destinationY.addEventListener('input', scheduleEncoding);
 elements.resetTiming.addEventListener('click', () => {
   elements.actionDuration.value = String(state.defaultActionMs);
   elements.idleDuration.value = String(state.defaultIdleMs);
